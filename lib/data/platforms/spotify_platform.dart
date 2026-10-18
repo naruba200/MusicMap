@@ -105,7 +105,7 @@ class SpotifyPlatform extends MusicPlatform {
       throw const PlatformException(
           'Set your Spotify client ID in lib/core/constants.dart first (see README).');
     }
-    final redirectUri = 'http://127.0.0.1:$_desktopCallbackPort/callback';
+    const redirectUri = 'http://127.0.0.1:$_desktopCallbackPort/callback';
     final verifier = _codeVerifier();
     final challenge = _codeChallenge(verifier);
 

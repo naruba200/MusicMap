@@ -161,7 +161,7 @@ class LastFmClient {
         }
         _consecutiveFailures++;
         if (_consecutiveFailures >= 3) {
-          throw LastFmException(
+          throw const LastFmException(
               'Last.fm is unreachable after 3 consecutive failures. Check your connection and retry.');
         }
         rethrow;

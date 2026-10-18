@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/time_ago.dart';
-import '../../data/repositories/history_repository.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
 import 'results_screen.dart';

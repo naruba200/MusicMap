@@ -225,7 +225,7 @@ class _PlaylistDetailScreenState
     // on failure (spec FR-04e, wired live in M2).
     final relatedAsync = _lastGenre != null
         ? ref.watch(relatedGenresProvider(_lastGenre!))
-        : const AsyncValue<List<String>>.data(const <String>[]);
+        : const AsyncValue<List<String>>.data(<String>[]);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
