@@ -3,7 +3,7 @@
 
 /// Spotify app client ID. Create one at https://developer.spotify.com/dashboard
 /// and set the redirect URI to `musicmap://callback`.
-const String spotifyClientId = 'YOUR_SPOTIFY_CLIENT_ID';
+const String spotifyClientId = '942dafb5bf404abca84149894a259b40';
 
 /// Custom scheme used for the Spotify OAuth redirect (must match the
 /// AndroidManifest intent-filter — see docs/android-share-intent.md).
