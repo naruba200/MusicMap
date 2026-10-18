@@ -121,16 +121,17 @@ void main() {
           PlatformIds.deezer);
       expect(
           registry
-              .parseAnyLink('https://soundcloud.com/u/sets/mix')
-              ?.platform
-              .id,
-          PlatformIds.soundCloud);
-      expect(
-          registry
               .parseAnyLink('https://music.youtube.com/playlist?list=PLxyz')
               ?.platform
               .id,
           PlatformIds.youTubeMusic);
+    });
+
+    test('SoundCloud is parked: registry returns null for its URLs', () {
+      // The adapter still parses links, but it is out of the v1 dropdown
+      // (SoundCloud API access now needs an Artist Pro account).
+      expect(registry.parseAnyLink('https://soundcloud.com/u/sets/mix'),
+          isNull);
     });
 
     test('returns null for unknown URLs', () {

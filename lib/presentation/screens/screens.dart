@@ -3,9 +3,6 @@
 
 import 'package:flutter/material.dart';
 
-import 'home_screen.dart';
-import 'playlist_detail_screen.dart';
-
 export 'home_screen.dart';
 export 'playlist_detail_screen.dart';
 

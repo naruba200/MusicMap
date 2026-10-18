@@ -10,7 +10,6 @@ import 'deezer_platform.dart';
 // (soundcloud_platform.dart) is kept for later; it is NOT in the dropdown.
 import 'music_platform.dart';
 import 'platform_oauth.dart';
-import 'soundcloud_platform.dart';
 import 'spotify_platform.dart';
 import 'youtube_music_platform.dart';
 

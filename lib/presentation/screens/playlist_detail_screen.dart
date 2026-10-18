@@ -62,8 +62,8 @@ class _PlaylistDetailScreenState
       _freshFinds = existing.settings.freshFinds;
       if (_genres.isNotEmpty) _lastGenre = _genres.last;
     } else {
-      _songCount = settingsRepo.defaultSongCount;
-      _albumCount = settingsRepo.defaultAlbumCount;
+      _songCount = settingsRepo.songCount;
+      _albumCount = settingsRepo.albumCount;
     }
     // Auto-save the import (FR-15), preserving any existing settings.
     ref.read(savedPlaylistsProvider.notifier).save(
@@ -178,7 +178,6 @@ class _PlaylistDetailScreenState
   }
 
   Widget _buildContent(BuildContext context, PlaylistDetailData data) {
-    final theme = Theme.of(context);
     final tracks = data.tracks;
     // Index 0 = header; the rest virtualize the track list.
     return ListView.builder(

@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'dart:io' show Platform;
 
 import '../../core/constants.dart';
 import '../../data/auth/token_store.dart';
@@ -234,9 +235,14 @@ final deepLinkHandlerProvider = Provider<void>((ref) {
     }
   }
 
-  ReceiveSharingIntent.instance.getMediaStream().listen(openSharedFiles);
-  ReceiveSharingIntent.instance.getInitialMedia().then((files) {
-    openSharedFiles(files);
-    ReceiveSharingIntent.instance.reset();
-  });
+  // receive_sharing_intent is Android/iOS only — guard so the app also
+  // runs on Windows/macOS/Linux for UI testing (share-receive just
+  // doesn't exist there).
+  if (Platform.isAndroid || Platform.isIOS) {
+    ReceiveSharingIntent.instance.getMediaStream().listen(openSharedFiles);
+    ReceiveSharingIntent.instance.getInitialMedia().then((files) {
+      openSharedFiles(files);
+      ReceiveSharingIntent.instance.reset();
+    });
+  }
 });

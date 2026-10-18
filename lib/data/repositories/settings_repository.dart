@@ -20,11 +20,11 @@ class SettingsRepository {
   Future<void> setSelectedPlatformId(String id) =>
       _box.put('platform', id);
 
-  int get defaultSongCount =>
+  int get songCount =>
       _box.get('songCount', defaultValue: defaultSongCount) as int;
   Future<void> setDefaultSongCount(int n) => _box.put('songCount', n);
 
-  int get defaultAlbumCount =>
+  int get albumCount =>
       _box.get('albumCount', defaultValue: defaultAlbumCount) as int;
   Future<void> setDefaultAlbumCount(int n) => _box.put('albumCount', n);
 }

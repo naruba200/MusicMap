@@ -109,7 +109,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
           // Platform picker.
           DropdownButtonFormField<String>(
-            value: platformId,
+            initialValue: platformId,
             decoration: const InputDecoration(
               labelText: 'Platform',
               border: OutlineInputBorder(),
