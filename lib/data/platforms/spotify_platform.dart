@@ -38,6 +38,23 @@ class SpotifyPlatform extends MusicPlatform {
 
   // -- Auth ---------------------------------------------------------------
 
+  /// Builds the Spotify authorize URL with strict percent-encoding.
+  /// NOTE: do NOT use Uri.https(..., queryParameters: {...}) here — Dart
+  /// encodes the space in `scope` as `+`, which Spotify does not decode as
+  /// a space. The token is then granted with no scopes and every playlist
+  /// call fails with 403 "Insufficient client scope".
+  Uri _authorizeUri({required String redirectUri, required String challenge}) {
+    final q = [
+      'client_id=${Uri.encodeComponent(spotifyClientId)}',
+      'response_type=code',
+      'redirect_uri=${Uri.encodeComponent(redirectUri)}',
+      'code_challenge_method=S256',
+      'code_challenge=${Uri.encodeComponent(challenge)}',
+      'scope=${Uri.encodeComponent('playlist-read-private playlist-read-collaborative')}',
+    ].join('&');
+    return Uri.parse('https://accounts.spotify.com/authorize?$q');
+  }
+
   @override
   Future<bool> signIn() async {
     if (await isSignedIn) return true;
@@ -55,14 +72,8 @@ class SpotifyPlatform extends MusicPlatform {
 
     final verifier = _codeVerifier();
     final challenge = _codeChallenge(verifier);
-    final authUri = Uri.https('accounts.spotify.com', '/authorize', {
-      'client_id': spotifyClientId,
-      'response_type': 'code',
-      'redirect_uri': oauthRedirectUri,
-      'code_challenge_method': 'S256',
-      'code_challenge': challenge,
-      'scope': 'playlist-read-private playlist-read-collaborative',
-    });
+    final authUri =
+        _authorizeUri(redirectUri: oauthRedirectUri, challenge: challenge);
 
     final code = await _redirectListener.waitForCode(
       launch: () => launchUrl(authUri, mode: LaunchMode.externalApplication),
@@ -108,14 +119,8 @@ class SpotifyPlatform extends MusicPlatform {
     }
 
     try {
-      final authUri = Uri.https('accounts.spotify.com', '/authorize', {
-        'client_id': spotifyClientId,
-        'response_type': 'code',
-        'redirect_uri': redirectUri,
-        'code_challenge_method': 'S256',
-        'code_challenge': challenge,
-        'scope': 'playlist-read-private playlist-read-collaborative',
-      });
+      final authUri =
+          _authorizeUri(redirectUri: redirectUri, challenge: challenge);
       await launchUrl(authUri, mode: LaunchMode.externalApplication);
 
       final request = await server.first
@@ -217,28 +222,51 @@ class SpotifyPlatform extends MusicPlatform {
   Future<Map<String, String>> _authHeaders() async =>
       {'Authorization': 'Bearer ${await _accessToken()}'};
 
+  /// Converts a Dio failure into a user-readable PlatformException,
+  /// including Spotify's own error message when present.
+  PlatformException _asPlatformException(DioException e) {
+    final status = e.response?.statusCode;
+    final data = e.response?.data;
+    final spotifyMsg =
+        data is Map ? (data['error'] as Map?)?['message'] as String? : null;
+    if (status == 401) {
+      return const PlatformException(
+          'Spotify session expired — sign in again.',
+          authExpired: true);
+    }
+    return PlatformException(
+        'Spotify request failed${status != null ? ' ($status)' : ''}'
+        '${spotifyMsg != null ? ': $spotifyMsg' : ''}.');
+  }
+
   @override
   Future<List<PlaylistInfo>> fetchUserPlaylists() async {
     final headers = await _authHeaders();
     final out = <PlaylistInfo>[];
     var url = 'https://api.spotify.com/v1/me/playlists?limit=50';
-    while (url.isNotEmpty) {
-      final res = await _dio.get(url, options: Options(headers: headers));
-      final data = res.data as Map<String, dynamic>;
-      for (final item in (data['items'] as List? ?? [])) {
-        final m = item as Map<String, dynamic>;
-        final images = (m['images'] as List?) ?? [];
-        out.add(PlaylistInfo(
-          platformId: id,
-          id: m['id'] as String,
-          name: m['name'] as String? ?? 'Untitled playlist',
-          description: m['description'] as String?,
-          coverUrl: images.isNotEmpty ? images.first['url'] as String? : null,
-          owner: (m['owner'] as Map?)?['display_name'] as String?,
-          trackCount: ((m['tracks'] as Map?)?['total'] as num?)?.toInt() ?? 0,
-        ));
+    try {
+      while (url.isNotEmpty) {
+        final res = await _dio.get(url, options: Options(headers: headers));
+        final data = res.data as Map<String, dynamic>;
+        for (final item in (data['items'] as List? ?? [])) {
+          final m = item as Map<String, dynamic>;
+          final images = (m['images'] as List?) ?? [];
+          out.add(PlaylistInfo(
+            platformId: id,
+            id: m['id'] as String,
+            name: m['name'] as String? ?? 'Untitled playlist',
+            description: m['description'] as String?,
+            coverUrl:
+                images.isNotEmpty ? images.first['url'] as String? : null,
+            owner: (m['owner'] as Map?)?['display_name'] as String?,
+            trackCount:
+                ((m['tracks'] as Map?)?['total'] as num?)?.toInt() ?? 0,
+          ));
+        }
+        url = (data['next'] as String?) ?? '';
       }
-      url = (data['next'] as String?) ?? '';
+    } on DioException catch (e) {
+      throw _asPlatformException(e);
     }
     return out;
   }
