@@ -227,8 +227,17 @@ class SpotifyPlatform extends MusicPlatform {
   PlatformException _asPlatformException(DioException e) {
     final status = e.response?.statusCode;
     final data = e.response?.data;
-    final spotifyMsg =
-        data is Map ? (data['error'] as Map?)?['message'] as String? : null;
+    // NOTE: do not collapse this into a one-liner like
+    //   data is Map ? (data['error'] as Map?)?['message'] : null
+    // The `?` right after the ternary's `?` gets parsed as a nested
+    // ternary instead of a null-aware subscript, and compilation fails.
+    String? spotifyMsg;
+    if (data is Map) {
+      final err = data['error'];
+      if (err is Map && err['message'] is String) {
+        spotifyMsg = err['message'] as String;
+      }
+    }
     if (status == 401) {
       return const PlatformException(
           'Spotify session expired — sign in again.',
