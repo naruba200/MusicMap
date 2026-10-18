@@ -206,7 +206,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 child: TextField(
                   controller: _linkController,
                   decoration: const InputDecoration(
-                    hintText: 'https://open.spotify.com/playlist/…',
+                    hintText: 'https://www.deezer.com/playlist/…',
                     border: OutlineInputBorder(),
                   ),
                   keyboardType: TextInputType.url,

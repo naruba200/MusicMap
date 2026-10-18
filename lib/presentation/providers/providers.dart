@@ -53,7 +53,7 @@ final playlistRepositoryProvider =
 // -- Selection & auth -------------------------------------------------------
 
 final selectedPlatformIdProvider =
-    StateProvider<String>((ref) => PlatformIds.spotify);
+    StateProvider<String>((ref) => PlatformIds.deezer);
 
 class AuthNotifier extends StateNotifier<Map<String, bool>> {
   final PlatformRegistry _registry;

@@ -107,12 +107,12 @@ void main() {
 
   group('PlatformRegistry.parseAnyLink', () {
     test('routes each URL to the right platform', () {
+      // Spotify is parked for v1 (not in the registry): its links no longer
+      // resolve via parseAnyLink, even though SpotifyPlatform.parseLink
+      // itself still works (tested above).
       expect(
-          registry
-              .parseAnyLink('https://open.spotify.com/playlist/abc123')
-              ?.platform
-              .id,
-          PlatformIds.spotify);
+          registry.parseAnyLink('https://open.spotify.com/playlist/abc123'),
+          isNull);
       expect(
           registry
               .parseAnyLink('https://www.deezer.com/playlist/12345')
