@@ -5,7 +5,9 @@
 // `musicmap://callback` (plus the AndroidManifest intent-filter — see
 // docs/android-share-intent.md).
 
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
@@ -39,6 +41,13 @@ class SpotifyPlatform extends MusicPlatform {
   @override
   Future<bool> signIn() async {
     if (await isSignedIn) return true;
+    // TEST-ONLY path for desktop (Windows/macOS/Linux): the musicmap://
+    // custom scheme isn't registered there, so use the loopback flow.
+    // Remove signInDesktop() before release — mobile always uses PKCE +
+    // the custom scheme below.
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return signInDesktop();
+    }
     if (spotifyClientId == 'YOUR_SPOTIFY_CLIENT_ID') {
       throw const PlatformException(
           'Set your Spotify client ID in lib/core/constants.dart first (see README).');
@@ -65,13 +74,76 @@ class SpotifyPlatform extends MusicPlatform {
     return true;
   }
 
-  Future<void> _exchangeCode(String code, String verifier) async {
+  // ------------------------------------------------------------------
+  // TEST-ONLY SCAFFOLDING (desktop sign-in). Remove before release.
+  //
+  // On desktop the musicmap:// custom scheme isn't registered with the OS,
+  // so the browser can't bounce the OAuth code back into the app. Instead
+  // the app binds a loopback server on 127.0.0.1 and Spotify redirects
+  // there (RFC 8252 §7.3 — the standard desktop-OAuth pattern).
+  //
+  // Dashboard setup: add `http://127.0.0.1:8899/callback` as a second
+  // redirect URI next to `musicmap://callback`.
+  // ------------------------------------------------------------------
+
+  /// Fixed loopback port for desktop testing (see note above).
+  static const int _desktopCallbackPort = 8899;
+
+  Future<bool> signInDesktop() async {
+    if (spotifyClientId == 'YOUR_SPOTIFY_CLIENT_ID') {
+      throw const PlatformException(
+          'Set your Spotify client ID in lib/core/constants.dart first (see README).');
+    }
+    final redirectUri = 'http://127.0.0.1:$_desktopCallbackPort/callback';
+    final verifier = _codeVerifier();
+    final challenge = _codeChallenge(verifier);
+
+    late final HttpServer server;
+    try {
+      server = await HttpServer.bind(
+          InternetAddress.loopbackIPv4, _desktopCallbackPort);
+    } catch (_) {
+      throw const PlatformException(
+          'Could not bind the local callback server — is port 8899 already in use?');
+    }
+
+    try {
+      final authUri = Uri.https('accounts.spotify.com', '/authorize', {
+        'client_id': spotifyClientId,
+        'response_type': 'code',
+        'redirect_uri': redirectUri,
+        'code_challenge_method': 'S256',
+        'code_challenge': challenge,
+        'scope': 'playlist-read-private playlist-read-collaborative',
+      });
+      await launchUrl(authUri, mode: LaunchMode.externalApplication);
+
+      final request = await server.first
+          .timeout(const Duration(minutes: 5), onTimeout: () => throw TimeoutException('Login timed out.'));
+      final code = request.uri.queryParameters['code'];
+      request.response
+        ..statusCode = 200
+        ..headers.contentType = ContentType.html
+        ..write(
+            '<h1>Signed in to Music Map</h1><p>You can close this tab.</p>');
+      await request.response.close();
+      if (code == null) return false; // user denied access
+
+      await _exchangeCode(code, verifier, redirectUri: redirectUri);
+      return true;
+    } finally {
+      await server.close(force: true);
+    }
+  }
+
+  Future<void> _exchangeCode(String code, String verifier,
+      {String? redirectUri}) async {
     final res = await _dio.post(
       'https://accounts.spotify.com/api/token',
       data: {
         'grant_type': 'authorization_code',
         'code': code,
-        'redirect_uri': oauthRedirectUri,
+        'redirect_uri': redirectUri ?? oauthRedirectUri,
         'client_id': spotifyClientId,
         'code_verifier': verifier,
       },

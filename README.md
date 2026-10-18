@@ -19,6 +19,22 @@ flutter run
 Then add the two intent-filters from `docs/android-share-intent.md` to
 `android/app/src/main/AndroidManifest.xml` (OAuth redirect + share-intent).
 
+### Desktop testing (temporary scaffolding)
+
+`flutter run -d windows` works for UI testing. Spotify sign-in on desktop
+uses a loopback redirect because the `musicmap://` scheme isn't registered
+with the OS:
+
+1. In the Spotify dashboard, add a second redirect URI:
+   `http://127.0.0.1:8899/callback` (keep `musicmap://callback` too).
+2. Sign in from the app — the browser opens, and after login a local
+   server inside the app captures the code.
+
+This is test-only scaffolding: `signInDesktop()` in
+`lib/data/platforms/spotify_platform.dart` is marked TEST-ONLY and should
+be removed before release. Share-intent receiving is Android-only and is
+automatically skipped on desktop.
+
 ## Keys & setup notes
 
 - **Spotify**: register a free app at the Spotify Developer Dashboard for the
