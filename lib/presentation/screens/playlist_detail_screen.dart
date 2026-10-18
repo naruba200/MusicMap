@@ -460,6 +460,8 @@ class _PlaylistDetailScreenState
                           args: GenerationArgs(
                             surprise: false,
                             seedName: data.info.name,
+                            seedPlaylistId: widget.playlistId,
+                            seedPlatformId: widget.platformId,
                             tracks: data.tracks,
                             settings: settings,
                           ),

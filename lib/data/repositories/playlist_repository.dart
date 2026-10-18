@@ -42,6 +42,10 @@ class PlaylistRepository {
       _box.put(_key(playlist.info.platformId, playlist.info.id),
           playlist.toJson());
 
+  /// Full export payload for FR-14b.
+  List<Map<String, dynamic>> exportJson() =>
+      [for (final p in getAll()) p.toJson()];
+
   Future<void> remove(String platformId, String playlistId) =>
       _box.delete(_key(platformId, playlistId));
 

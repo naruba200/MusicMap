@@ -9,6 +9,7 @@ import '../../core/constants.dart';
 import '../../data/engine/recommendation_engine.dart';
 import '../../data/lastfm/lastfm_client.dart';
 import '../../data/models/music_models.dart';
+import '../../data/repositories/history_repository.dart';
 import 'providers.dart';
 
 /// Maps a mood/genre chip label to a Last.fm tag.
@@ -55,6 +56,33 @@ class GenerationResult {
     required this.seedCount,
     required this.skippedSeeds,
   });
+
+  Map<String, dynamic> toJson() => {
+        'songs': [for (final s in songs) s.toJson()],
+        'albums': [for (final a in albums) a.toJson()],
+        'seedName': seedName,
+        'isSurprise': isSurprise,
+        'seedCount': seedCount,
+        'skippedSeeds': skippedSeeds,
+      };
+
+  factory GenerationResult.fromJson(Map<String, dynamic> json) =>
+      GenerationResult(
+        songs: (json['songs'] as List?)
+                ?.whereType<Map>()
+                .map((m) => ScoredTrack.fromJson(m.cast<String, dynamic>()))
+                .toList() ??
+            const [],
+        albums: (json['albums'] as List?)
+                ?.whereType<Map>()
+                .map((m) => AlbumRec.fromJson(m.cast<String, dynamic>()))
+                .toList() ??
+            const [],
+        seedName: json['seedName'] as String? ?? 'Recommendations',
+        isSurprise: json['isSurprise'] as bool? ?? false,
+        seedCount: (json['seedCount'] as num?)?.toInt() ?? 0,
+        skippedSeeds: (json['skippedSeeds'] as num?)?.toInt() ?? 0,
+      );
 }
 
 class GenerationState {
@@ -91,8 +119,9 @@ class GenerationState {
 }
 
 final generationProvider =
-    StateNotifierProvider<GenerationNotifier, GenerationState>(
-        (ref) => GenerationNotifier(ref.watch(dioProvider)));
+    StateNotifierProvider<GenerationNotifier, GenerationState>((ref) =>
+        GenerationNotifier(
+            ref.watch(dioProvider), ref.watch(historyRepositoryProvider)));
 
 /// Related genres for a selected genre chip, live via Last.fm tag.getSimilar
 /// with the static fallback map on failure. Cached per genre for the session.
@@ -120,9 +149,10 @@ String _displayTag(String tag) =>
 
 class GenerationNotifier extends StateNotifier<GenerationState> {
   final Dio _dio;
+  final HistoryRepository _history;
   bool _cancelled = false;
 
-  GenerationNotifier(this._dio) : super(GenerationState.idle);
+  GenerationNotifier(this._dio, this._history) : super(GenerationState.idle);
 
   LastFmClient get _lfm => LastFmClient(dio: _dio, apiKey: lastFmApiKey);
 
@@ -155,6 +185,8 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
     required String seedName,
     required List<Track> tracks,
     required DiscoverySettings settings,
+    String? seedPlaylistId,
+    String? seedPlatformId,
   }) async {
     _cancelled = false;
     state = const GenerationState(running: true);
@@ -269,15 +301,17 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
 
       final albums =
           RecommendationEngine.deriveAlbums(enriched, settings.albumCount);
-      state = GenerationState(
+      await _finishRun(
         result: GenerationResult(
-          songs: songs,
+          songs: enriched,
           albums: albums,
           seedName: seedName,
           isSurprise: false,
           seedCount: selection.seeds.length,
           skippedSeeds: skipped,
         ),
+        seedPlaylistId: seedPlaylistId,
+        seedPlatformId: seedPlatformId,
       );
     } on GenerationException catch (e) {
       state = GenerationState(error: e.message, canRetry: e.retryable);
@@ -332,7 +366,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         count: settings.albumCount,
       );
 
-      state = GenerationState(
+      await _finishRun(
         result: GenerationResult(
           songs: songs,
           albums: albums,
@@ -341,6 +375,8 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           seedCount: 0,
           skippedSeeds: 0,
         ),
+        seedPlaylistId: null,
+        seedPlatformId: null,
       );
     } on GenerationException catch (e) {
       state = GenerationState(error: e.message, canRetry: e.retryable);
@@ -361,6 +397,30 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
     const pool = ['pop', 'rock', 'electronic', 'hip-hop', 'j-pop', 'anime'];
     final start = DateTime.now().day % pool.length;
     return [for (var i = 0; i < 3; i++) pool[(start + i) % pool.length]];
+  }
+
+  /// Persist a completed run to history (FR-13), then publish the result.
+  /// History failures never fail the run itself.
+  Future<void> _finishRun({
+    required GenerationResult result,
+    String? seedPlaylistId,
+    String? seedPlatformId,
+  }) async {
+    final now = DateTime.now();
+    try {
+      await _history.add(HistoryRun(
+        id: now.microsecondsSinceEpoch.toString(),
+        timestamp: now,
+        seedName: result.seedName,
+        seedPlaylistId: seedPlaylistId,
+        seedPlatformId: seedPlatformId,
+        isSurprise: result.isSurprise,
+        resultJson: result.toJson(),
+      ));
+    } catch (_) {
+      // history is best-effort
+    }
+    state = GenerationState(result: result);
   }
 
   void _abort() {

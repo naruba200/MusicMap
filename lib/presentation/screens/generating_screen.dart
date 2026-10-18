@@ -11,12 +11,16 @@ import 'results_screen.dart';
 class GenerationArgs {
   final bool surprise;
   final String seedName;
+  final String? seedPlaylistId;
+  final String? seedPlatformId;
   final List<Track> tracks;
   final DiscoverySettings settings;
 
   const GenerationArgs({
     required this.surprise,
     required this.seedName,
+    this.seedPlaylistId,
+    this.seedPlatformId,
     required this.tracks,
     required this.settings,
   });
@@ -44,6 +48,8 @@ class _GeneratingScreenState extends ConsumerState<GeneratingScreen> {
           seedName: widget.args.seedName,
           tracks: widget.args.tracks,
           settings: widget.args.settings,
+          seedPlaylistId: widget.args.seedPlaylistId,
+          seedPlatformId: widget.args.seedPlatformId,
         );
       }
     });
@@ -58,6 +64,8 @@ class _GeneratingScreenState extends ConsumerState<GeneratingScreen> {
         seedName: widget.args.seedName,
         tracks: widget.args.tracks,
         settings: widget.args.settings,
+        seedPlaylistId: widget.args.seedPlaylistId,
+        seedPlatformId: widget.args.seedPlatformId,
       );
     }
   }

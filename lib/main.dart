@@ -4,6 +4,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import 'core/theme.dart';
 import 'data/repositories/favorites_repository.dart';
+import 'data/repositories/history_repository.dart';
 import 'data/repositories/playlist_repository.dart';
 import 'data/repositories/settings_repository.dart';
 import 'presentation/providers/providers.dart';
@@ -16,6 +17,7 @@ Future<void> main() async {
   final settingsRepo = await SettingsRepository.open();
   final playlistRepo = await PlaylistRepository.open();
   final favoritesRepo = await FavoritesRepository.open();
+  final historyRepo = await HistoryRepository.open();
 
   runApp(
     ProviderScope(
@@ -23,6 +25,7 @@ Future<void> main() async {
         settingsRepositoryProvider.overrideWithValue(settingsRepo),
         playlistRepositoryProvider.overrideWithValue(playlistRepo),
         favoritesRepositoryProvider.overrideWithValue(favoritesRepo),
+        historyRepositoryProvider.overrideWithValue(historyRepo),
       ],
       child: const MusicMapApp(),
     ),
