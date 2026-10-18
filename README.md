@@ -23,8 +23,9 @@ Then add the two intent-filters from `docs/android-share-intent.md` to
 
 - **Spotify**: register a free app at the Spotify Developer Dashboard for the
   OAuth client ID (spec §10).
-- **SoundCloud**: register a free app for a `client_id` (spec §10). The app
-  shows a clear error if it is unset.
+- **SoundCloud**: parked for v1 — SoundCloud now requires an Artist Pro
+  account for API access. The adapter (`lib/data/platforms/soundcloud_platform.dart`)
+  is kept in-repo and can be re-enabled in the dropdown when a `client_id` exists.
 - **Last.fm**: free API key (spec §10). Free-tier, revocable — never commit a
   paid key.
 - **Deezer**: no key needed for public playlists.

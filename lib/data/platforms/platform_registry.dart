@@ -5,6 +5,9 @@ import 'package:dio/dio.dart';
 import '../auth/token_store.dart';
 import '../models/music_models.dart';
 import 'deezer_platform.dart';
+// NOTE: SoundCloudPlatform is parked — SoundCloud now requires an Artist Pro
+// account to register an API app (2026-10-18). The adapter
+// (soundcloud_platform.dart) is kept for later; it is NOT in the dropdown.
 import 'music_platform.dart';
 import 'platform_oauth.dart';
 import 'soundcloud_platform.dart';
@@ -21,7 +24,8 @@ class PlatformRegistry {
   }) : platforms = [
           SpotifyPlatform(dio, tokenStore, redirectListener),
           DeezerPlatform(dio),
-          SoundCloudPlatform(dio),
+          // SoundCloudPlatform(dio) — parked: needs an Artist Pro account
+          // for API access (2026-10-18). Re-add when a client_id exists.
           YouTubeMusicPlatform(),
         ];
 
