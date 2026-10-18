@@ -38,7 +38,11 @@ automatically skipped on desktop.
 ## Keys & setup notes
 
 - **Spotify**: register a free app at the Spotify Developer Dashboard for the
-  OAuth client ID (spec §10).
+  OAuth client ID (spec §10). **Requires Premium**: since Feb 2026 Spotify
+  blocks Dev Mode apps from the Web API unless the dashboard account holds
+  an active Premium subscription (you'll get 403 on everything without it).
+- **Deezer**: no key needed for public playlists — the zero-setup way to
+  test playlist intake.
 - **SoundCloud**: parked for v1 — SoundCloud now requires an Artist Pro
   account for API access. The adapter (`lib/data/platforms/soundcloud_platform.dart`)
   is kept in-repo and can be re-enabled in the dropdown when a `client_id` exists.
