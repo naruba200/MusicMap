@@ -120,14 +120,23 @@ class SpotifyPlatform extends MusicPlatform {
 
       final request = await server.first
           .timeout(const Duration(minutes: 5), onTimeout: () => throw TimeoutException('Login timed out.'));
-      final code = request.uri.queryParameters['code'];
+      final params = request.uri.queryParameters;
+      final error = params['error'];
+      final code = params['code'];
+      final ok = error == null && code != null;
       request.response
         ..statusCode = 200
         ..headers.contentType = ContentType.html
-        ..write(
-            '<h1>Signed in to Music Map</h1><p>You can close this tab.</p>');
+        ..write(ok
+            ? '<h1>Signed in to Music Map</h1><p>You can close this tab.</p>'
+            : '<h1>Sign-in failed</h1><p>${error ?? 'cancelled'}. You can close this tab.</p>');
       await request.response.close();
-      if (code == null) return false; // user denied access
+      if (error != null) {
+        // Surface Spotify's real error (e.g. server_error) instead of
+        // a misleading "cancelled" message.
+        throw PlatformException('Spotify sign-in failed: $error');
+      }
+      if (code == null) return false; // user closed the tab
 
       await _exchangeCode(code, verifier, redirectUri: redirectUri);
       return true;
