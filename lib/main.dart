@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'core/theme.dart';
+import 'data/repositories/favorites_repository.dart';
 import 'data/repositories/playlist_repository.dart';
 import 'data/repositories/settings_repository.dart';
 import 'presentation/providers/providers.dart';
@@ -14,12 +15,14 @@ Future<void> main() async {
 
   final settingsRepo = await SettingsRepository.open();
   final playlistRepo = await PlaylistRepository.open();
+  final favoritesRepo = await FavoritesRepository.open();
 
   runApp(
     ProviderScope(
       overrides: [
         settingsRepositoryProvider.overrideWithValue(settingsRepo),
         playlistRepositoryProvider.overrideWithValue(playlistRepo),
+        favoritesRepositoryProvider.overrideWithValue(favoritesRepo),
       ],
       child: const MusicMapApp(),
     ),

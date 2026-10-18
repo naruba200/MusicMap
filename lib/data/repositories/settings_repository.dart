@@ -16,7 +16,7 @@ class SettingsRepository {
   }
 
   String get selectedPlatformId =>
-      _box.get('platform', defaultValue: PlatformIds.spotify) as String;
+      _box.get('platform', defaultValue: PlatformIds.deezer) as String;
   Future<void> setSelectedPlatformId(String id) =>
       _box.put('platform', id);
 
