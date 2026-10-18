@@ -47,9 +47,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       _snack('That doesn\'t look like a playlist link from a supported platform.');
       return;
     }
-    if (parsed.platform.isBeta) {
-      _snack('${parsed.platform.displayName} intake is experimental (β).');
-    }
     _linkController.clear();
     if (!mounted) return;
     Navigator.of(context).push(
@@ -227,9 +224,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               Expanded(
                 child: TextField(
                   controller: _linkController,
-                  decoration: const InputDecoration(
-                    hintText: 'https://www.deezer.com/playlist/…',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    hintText: platform.id == PlatformIds.youTubeMusic
+                        ? 'https://music.youtube.com/playlist?list=…'
+                        : 'https://www.deezer.com/playlist/…',
+                    border: const OutlineInputBorder(),
                   ),
                   keyboardType: TextInputType.url,
                   onSubmitted: (_) => _importLink(platform),

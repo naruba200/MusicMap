@@ -236,14 +236,18 @@ class YouTubeMusicPlatform extends MusicPlatform {
     if (li == null) return null;
     final flex = li['flexColumns'];
     if (flex is! List || flex.isEmpty) return null;
-    final title = flex.isNotEmpty && flex[0] is Map<String, dynamic>
+    final title = flex[0] is Map<String, dynamic>
         ? _firstRunText(flex[0] as Map<String, dynamic>)
         : null;
     if (title == null || title.isEmpty) return null;
-    final artist = flex.length > 1 && flex[1] is Map<String, dynamic>
-        ? _firstRunText(flex[1] as Map<String, dynamic>)
-        : null;
-    final album = flex.length > 2 && flex[2] is Map<String, dynamic>
+    // Subtitle runs look like [artist, "•", album] or just [artist].
+    final subRuns = flex.length > 1 && flex[1] is Map<String, dynamic>
+        ? _meaningfulRuns(flex[1] as Map<String, dynamic>)
+        : const <String>[];
+    final artist = subRuns.isNotEmpty ? subRuns[0] : null;
+    var album = subRuns.length > 1 ? subRuns[1] : null;
+    // Some layouts put the album in its own column instead.
+    album ??= flex.length > 2 && flex[2] is Map<String, dynamic>
         ? _firstRunText(flex[2] as Map<String, dynamic>)
         : null;
     int? durationMs;
@@ -299,18 +303,28 @@ Map<String, dynamic>? _asMap(dynamic v) =>
 
 /// First non-empty run text from any *Renderer.text.runs in a column map.
 String? _firstRunText(Map<String, dynamic> column) {
+  final runs = _meaningfulRuns(column);
+  return runs.isEmpty ? null : runs.first;
+}
+
+/// All meaningful run texts in a column map, skipping "•" separators.
+List<String> _meaningfulRuns(Map<String, dynamic> column) {
+  final out = <String>[];
   for (final key in column.keys) {
     final runs = _dig(column, [key, 'text', 'runs']);
     if (runs is List) {
       for (final run in runs) {
         if (run is Map) {
           final t = run['text'];
-          if (t is String && t.trim().isNotEmpty) return t.trim();
+          if (t is String) {
+            final s = t.trim();
+            if (s.isNotEmpty && s != '•' && s != '·') out.add(s);
+          }
         }
       }
     }
   }
-  return null;
+  return out;
 }
 
 /// First non-empty run text from a {'runs': [...]} object.

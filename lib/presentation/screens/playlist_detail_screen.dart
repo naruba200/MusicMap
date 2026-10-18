@@ -157,8 +157,8 @@ class _PlaylistDetailScreenState
             if (platform.isBeta) ...[
               const SizedBox(height: 8),
               Text(
-                '${platform.displayName} is experimental (β) — link intake '
-                'isn\'t implemented yet.',
+                '${platform.displayName} is experimental (β) — '
+                'if this keeps failing, try Deezer instead.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
