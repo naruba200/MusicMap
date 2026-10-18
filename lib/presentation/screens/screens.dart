@@ -8,6 +8,7 @@ export 'playlist_detail_screen.dart';
 export 'generating_screen.dart';
 export 'results_screen.dart';
 export 'album_detail_screen.dart';
+export 'favorites_screen.dart';
 
 /// Placeholder body for not-yet-built milestones.
 class PlaceholderBody extends StatelessWidget {
@@ -40,32 +41,6 @@ class PlaceholderBody extends StatelessWidget {
   }
 }
 
-class NewsScreen extends StatelessWidget {
-  const NewsScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) => const Scaffold(
-        body: PlaceholderBody(
-          icon: Icons.newspaper_outlined,
-          label: 'News',
-          milestone: 'M4: RSS feed + For you ranking',
-        ),
-      );
-}
-
-class FavoritesScreen extends StatelessWidget {
-  const FavoritesScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) => const Scaffold(
-        body: PlaceholderBody(
-          icon: Icons.favorite_outline,
-          label: 'Favorites',
-          milestone: 'M3: saved recommendations + Daily picks',
-        ),
-      );
-}
-
 class HistoryScreen extends StatelessWidget {
   const HistoryScreen({super.key});
 
@@ -88,6 +63,19 @@ class SettingsScreen extends StatelessWidget {
           icon: Icons.settings_outlined,
           label: 'Settings',
           milestone: 'M3: sign-in, sources, export, about',
+        ),
+      );
+}
+
+class NewsScreen extends StatelessWidget {
+  const NewsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+        body: PlaceholderBody(
+          icon: Icons.newspaper_outlined,
+          label: 'News',
+          milestone: 'M4: RSS feed + For you ranking',
         ),
       );
 }

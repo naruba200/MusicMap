@@ -232,6 +232,7 @@ class _AlbumCard extends ConsumerWidget {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  FavoriteAlbumButton(album: album),
                   IconButton(
                     icon: const Icon(Icons.open_in_new),
                     tooltip: 'Open album in…',

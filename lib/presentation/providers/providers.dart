@@ -9,12 +9,14 @@ import 'dart:io' show Platform;
 
 import '../../core/constants.dart';
 import '../../data/auth/token_store.dart';
+import '../../data/engine/recommendation_engine.dart';
 import '../../data/models/music_models.dart';
 import '../../data/network/retry_interceptor.dart';
 import '../../data/platforms/music_platform.dart';
 import '../../data/platforms/platform_oauth.dart';
 import '../../data/platforms/platform_registry.dart';
 import '../../data/repositories/favorites_repository.dart';
+import '../../data/repositories/history_repository.dart';
 import '../../data/repositories/playlist_repository.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../screens/playlist_detail_screen.dart';
@@ -54,6 +56,24 @@ final playlistRepositoryProvider =
 /// Overridden in main() after Hive opens.
 final favoritesRepositoryProvider =
     Provider<FavoritesRepository>((ref) => throw UnimplementedError());
+
+/// Overridden in main() after Hive opens.
+final historyRepositoryProvider =
+    Provider<HistoryRepository>((ref) => throw UnimplementedError());
+
+/// Bumped on every favorites mutation so list UIs refresh.
+final favoritesVersionProvider = StateProvider<int>((ref) => 0);
+
+final favoriteTracksProvider = Provider<List<Track>>((ref) {
+  ref.watch(favoritesVersionProvider);
+  return ref.watch(favoritesRepositoryProvider).getAll();
+});
+
+final favoriteAlbumsProvider =
+    Provider<List<AlbumRec>>((ref) {
+  ref.watch(favoritesVersionProvider);
+  return ref.watch(favoritesRepositoryProvider).getAlbums();
+});
 
 // -- Selection & auth -------------------------------------------------------
 

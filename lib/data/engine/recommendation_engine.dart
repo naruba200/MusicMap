@@ -20,6 +20,20 @@ class ScoredTrack {
 
   ScoredTrack withScore(double newScore) =>
       ScoredTrack(track: track, score: newScore, reasons: reasons);
+
+  Map<String, dynamic> toJson() => {
+        'track': track.toJson(),
+        'score': score,
+        'reasons': reasons,
+      };
+
+  factory ScoredTrack.fromJson(Map<String, dynamic> json) => ScoredTrack(
+        track: Track.fromJson(
+            (json['track'] as Map).cast<String, dynamic>()),
+        score: (json['score'] as num).toDouble(),
+        reasons: (json['reasons'] as List?)?.map((e) => e.toString()).toList() ??
+            const [],
+      );
 }
 
 /// An album recommendation derived from recommended songs (FR-11).
@@ -39,6 +53,28 @@ class AlbumRec {
     required this.bestScore,
     required this.songs,
   });
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'artist': artist,
+        if (artUrl != null) 'artUrl': artUrl,
+        'songCount': songCount,
+        'bestScore': bestScore,
+        'songs': [for (final s in songs) s.toJson()],
+      };
+
+  factory AlbumRec.fromJson(Map<String, dynamic> json) => AlbumRec(
+        name: json['name'] as String? ?? 'Unknown album',
+        artist: json['artist'] as String? ?? 'Unknown artist',
+        artUrl: json['artUrl'] as String?,
+        songCount: (json['songCount'] as num?)?.toInt() ?? 0,
+        bestScore: (json['bestScore'] as num?)?.toDouble() ?? 0,
+        songs: (json['songs'] as List?)
+                ?.whereType<Map>()
+                .map((m) => ScoredTrack.fromJson(m.cast<String, dynamic>()))
+                .toList() ??
+            const [],
+      );
 }
 
 /// Result of seed selection (FR-05 / FR-05b).
