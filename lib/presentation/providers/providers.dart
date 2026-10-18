@@ -10,6 +10,7 @@ import 'dart:io' show Platform;
 import '../../core/constants.dart';
 import '../../data/auth/token_store.dart';
 import '../../data/models/music_models.dart';
+import '../../data/network/retry_interceptor.dart';
 import '../../data/platforms/music_platform.dart';
 import '../../data/platforms/platform_oauth.dart';
 import '../../data/platforms/platform_registry.dart';
@@ -22,7 +23,11 @@ final navigatorKey = GlobalKey<NavigatorState>();
 
 // -- Core singletons --------------------------------------------------------
 
-final dioProvider = Provider<Dio>((ref) => Dio());
+final dioProvider = Provider<Dio>((ref) {
+  final dio = Dio();
+  dio.interceptors.add(ConnectionRetryInterceptor(dio));
+  return dio;
+});
 
 final tokenStoreProvider = Provider<TokenStore>((ref) => TokenStore());
 
