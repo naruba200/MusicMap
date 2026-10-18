@@ -134,7 +134,7 @@ class SpotifyPlatform extends MusicPlatform {
         ..headers.contentType = ContentType.html
         ..write(ok
             ? '<h1>Signed in to Music Map</h1><p>You can close this tab.</p>'
-            : '<h1>Sign-in failed</h1><p>${error ?? 'cancelled'}. You can close this tab.</p>');
+            : "<h1>Sign-in failed</h1><p>${error ?? 'cancelled'}. You can close this tab.</p>");
       await request.response.close();
       if (error != null) {
         // Surface Spotify's real error (e.g. server_error) instead of
