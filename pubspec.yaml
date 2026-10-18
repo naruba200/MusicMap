@@ -1,0 +1,35 @@
+name: music_map
+description: Music Map - playlist-based song & album recommendations with a personalized music-news feed.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # State management (spec §8)
+  flutter_riverpod: ^2.5.1
+  # HTTP (spec §8)
+  dio: ^5.4.0
+  # Local storage (spec §8)
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  flutter_secure_storage: ^9.0.0
+  # Deep links / share-intent / OAuth redirect (FR-01, FR-16)
+  app_links: ^6.1.0
+  # External browser / Custom Tabs (FR-15, FR-26)
+  url_launcher: ^6.2.6
+  # Article images (FR-23)
+  cached_network_image: ^3.3.1
+  # File sharing for data export (FR-14b)
+  share_plus: ^10.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
