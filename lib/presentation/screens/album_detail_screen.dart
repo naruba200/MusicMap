@@ -54,6 +54,13 @@ class AlbumDetailScreen extends StatelessWidget {
                     style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant),
                   ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () => showAlbumOutboundSheet(
+                        context, album.artist, album.name),
+                    icon: const Icon(Icons.open_in_new, size: 18),
+                    label: const Text('Open album in…'),
+                  ),
                 ],
               ),
             ),
@@ -104,7 +111,7 @@ class AlbumDetailScreen extends StatelessWidget {
                         FavoriteButton(track: track),
                         IconButton(
                           icon: const Icon(Icons.open_in_new),
-                          tooltip: 'Open in Spotify / Deezer',
+                          tooltip: 'Open in…',
                           onPressed: () => showOutboundSheet(context, track),
                         ),
                       ],

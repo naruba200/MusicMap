@@ -177,7 +177,7 @@ class _SongRow extends StatelessWidget {
           FavoriteButton(track: track),
           IconButton(
             icon: const Icon(Icons.open_in_new),
-            tooltip: 'Open in Spotify / Deezer',
+            tooltip: 'Open in…',
             onPressed: () => showOutboundSheet(context, track),
           ),
         ],
@@ -229,7 +229,18 @@ class _AlbumCard extends ConsumerWidget {
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.open_in_new),
+                    tooltip: 'Open album in…',
+                    onPressed: () => showAlbumOutboundSheet(
+                        context, album.artist, album.name),
+                  ),
+                  const Icon(Icons.chevron_right),
+                ],
+              ),
             ],
           ),
         ),
