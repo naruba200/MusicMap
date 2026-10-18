@@ -6,8 +6,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
 import '../../core/time_ago.dart';
+import '../../data/models/music_models.dart';
 import '../../data/platforms/music_platform.dart';
+import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
+import 'generating_screen.dart';
 import 'playlist_detail_screen.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -73,10 +76,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Surprise me (engine arrives in M2 — button kept for layout parity).
+          // Surprise me (M2 engine, no seed playlist — FR-19).
           FilledButton.icon(
-            onPressed: () =>
-                _snack('Surprise recommendations arrive in M2.'),
+            onPressed: () {
+              final settingsRepo = ref.read(settingsRepositoryProvider);
+              ref.read(generationProvider.notifier).reset();
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => GeneratingScreen(
+                    args: GenerationArgs(
+                      surprise: true,
+                      seedName: 'Surprise picks',
+                      tracks: const [],
+                      settings: DiscoverySettings(
+                        songCount: settingsRepo.songCount,
+                        albumCount: settingsRepo.albumCount,
+                        moods: Set.of(_surpriseMoods),
+                        genres: Set.of(_surpriseGenres),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
             icon: const Icon(Icons.shuffle),
             label: const Text('Surprise me'),
           ),

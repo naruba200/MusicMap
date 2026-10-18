@@ -4,6 +4,7 @@
 
 import '../lastfm/lastfm_client.dart';
 import '../models/music_models.dart';
+import '../../core/constants.dart';
 
 /// A recommended track with its score and human-readable reasons (FR-09).
 class ScoredTrack {
@@ -47,7 +48,7 @@ class SeedSelection {
 
   const SeedSelection({required this.seeds, required this.usableCount});
 
-  bool get meetsMinimum => usableCount >= 5;
+  bool get meetsMinimum => usableCount >= minUsableTracks;
 }
 
 class RecommendationEngine {

@@ -1,6 +1,6 @@
 // Playlist detail (S-03): cover + meta, virtualized track list (500+ safe),
 // count presets, discovery modifier chips, Fresh finds toggle, Rescan,
-// and the "Get recommendations" CTA (engine lands in M2).
+// and the "Get recommendations" CTA (M2 engine).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,7 +9,9 @@ import '../../core/constants.dart';
 import '../../core/time_ago.dart';
 import '../../data/models/music_models.dart';
 import '../../data/platforms/music_platform.dart';
+import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
+import 'generating_screen.dart';
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
   final String platformId;
@@ -219,9 +221,11 @@ class _PlaylistDetailScreenState
     final visibleGenres = _showAllGenres
         ? genreChips
         : genreChips.take(visibleGenreCount).toList();
-    final related = _lastGenre != null
-        ? (staticRelatedGenres[_lastGenre] ?? const <String>[])
-        : const <String>[];
+    // Related genres: live via Last.fm tag.getSimilar, static fallback map
+    // on failure (spec FR-04e, wired live in M2).
+    final relatedAsync = _lastGenre != null
+        ? ref.watch(relatedGenresProvider(_lastGenre!))
+        : const AsyncValue<List<String>>.data(const <String>[]);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -390,36 +394,47 @@ class _PlaylistDetailScreenState
             ),
           ],
         ),
-        if (related.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text('Related',
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: theme.colorScheme.secondary)),
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            children: [
-              for (final genre in related)
-                FilterChip(
-                  label: Text(genre),
-                  selected: _genres.contains(genre),
-                  side: BorderSide(
-                      color: theme.colorScheme.secondary.withValues(alpha: 0.5)),
-                  onSelected: (v) {
-                    setState(() {
-                      if (v) {
-                        _genres.add(genre);
-                        _lastGenre = genre;
-                      } else {
-                        _genres.remove(genre);
-                      }
-                    });
-                    _persistSettings();
-                  },
+        relatedAsync.when(
+          data: (related) {
+            if (related.isEmpty) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 4),
+                Text('Related',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.secondary)),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    for (final genre in related)
+                      FilterChip(
+                        label: Text(genre),
+                        selected: _genres.contains(genre),
+                        side: BorderSide(
+                            color: theme.colorScheme.secondary
+                                .withValues(alpha: 0.5)),
+                        onSelected: (v) {
+                          setState(() {
+                            if (v) {
+                              _genres.add(genre);
+                              _lastGenre = genre;
+                            } else {
+                              _genres.remove(genre);
+                            }
+                          });
+                          _persistSettings();
+                        },
+                      ),
+                  ],
                 ),
-            ],
-          ),
-        ],
+              ],
+            );
+          },
+          loading: () => const SizedBox.shrink(),
+          error: (_, __) => const SizedBox.shrink(),
+        ),
         const SizedBox(height: 16),
 
         // CTA.
@@ -429,7 +444,29 @@ class _PlaylistDetailScreenState
             onPressed: data.tracks.length < minUsableTracks
                 ? () => _snack(
                     'Need at least $minUsableTracks tracks — this playlist has ${data.tracks.length}.')
-                : () => _snack('The recommendation engine arrives in M2.'),
+                : () {
+                    final settings = DiscoverySettings(
+                      songCount: _songCount,
+                      albumCount: _albumCount,
+                      moods: Set.of(_moods),
+                      genres: Set.of(_genres),
+                      freshFinds: _freshFinds,
+                    );
+                    _persistSettings();
+                    ref.read(generationProvider.notifier).reset();
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GeneratingScreen(
+                          args: GenerationArgs(
+                            surprise: false,
+                            seedName: data.info.name,
+                            tracks: data.tracks,
+                            settings: settings,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
             child: const Text('Get recommendations'),
           ),
         ),

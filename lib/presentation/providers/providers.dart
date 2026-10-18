@@ -14,6 +14,7 @@ import '../../data/network/retry_interceptor.dart';
 import '../../data/platforms/music_platform.dart';
 import '../../data/platforms/platform_oauth.dart';
 import '../../data/platforms/platform_registry.dart';
+import '../../data/repositories/favorites_repository.dart';
 import '../../data/repositories/playlist_repository.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../screens/playlist_detail_screen.dart';
@@ -49,6 +50,10 @@ final settingsRepositoryProvider =
 /// Overridden in main() after Hive opens.
 final playlistRepositoryProvider =
     Provider<PlaylistRepository>((ref) => throw UnimplementedError());
+
+/// Overridden in main() after Hive opens.
+final favoritesRepositoryProvider =
+    Provider<FavoritesRepository>((ref) => throw UnimplementedError());
 
 // -- Selection & auth -------------------------------------------------------
 

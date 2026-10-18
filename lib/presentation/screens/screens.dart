@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 
 export 'home_screen.dart';
 export 'playlist_detail_screen.dart';
+export 'generating_screen.dart';
+export 'results_screen.dart';
+export 'album_detail_screen.dart';
 
 /// Placeholder body for not-yet-built milestones.
 class PlaceholderBody extends StatelessWidget {
