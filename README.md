@@ -10,9 +10,14 @@ changing behavior.
 ## Setup
 
 ```bash
+# Android only — do NOT add windows/web/ios platform folders.
+flutter create --platforms=android .
 flutter pub get
 flutter run
 ```
+
+Then add the two intent-filters from `docs/android-share-intent.md` to
+`android/app/src/main/AndroidManifest.xml` (OAuth redirect + share-intent).
 
 ## Keys & setup notes
 
