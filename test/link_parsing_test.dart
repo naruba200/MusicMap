@@ -86,7 +86,7 @@ void main() {
   });
 
   group('YouTube Music link parsing', () {
-    final platform = YouTubeMusicPlatform();
+    final platform = YouTubeMusicPlatform(dio);
 
     test('parses playlist list params', () {
       final ref = platform.parseLink(

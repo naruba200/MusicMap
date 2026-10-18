@@ -34,7 +34,7 @@ class PlatformRegistry {
           DeezerPlatform(dio),
           // SoundCloudPlatform(dio) — parked: needs an Artist Pro account
           // for API access (2026-10-18). Re-add when a client_id exists.
-          YouTubeMusicPlatform(),
+          YouTubeMusicPlatform(dio),
         ];
 
   MusicPlatform byId(String id) => platforms.firstWhere(
