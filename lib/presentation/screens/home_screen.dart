@@ -36,6 +36,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _confirmDelete(
+      String platformId, String playlistId, String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete saved playlist?'),
+        content: Text(
+            'Remove "$name" from your library? Its rescans and history stay on this device.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await ref
+          .read(savedPlaylistsProvider.notifier)
+          .remove(platformId, playlistId);
+      if (mounted) _snack('Deleted "$name".');
+    }
+  }
+
   Future<void> _importLink(MusicPlatform platform) async {
     final text = _linkController.text.trim();
     if (text.isEmpty) {
@@ -277,9 +305,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       '${s.tracks.length} tracks · scanned ${timeAgo(s.lastScannedAt)}'),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline),
-                    onPressed: () => ref
-                        .read(savedPlaylistsProvider.notifier)
-                        .remove(s.info.platformId, s.info.id),
+                    onPressed: () => _confirmDelete(
+                        s.info.platformId, s.info.id, s.info.name),
                   ),
                   onTap: () {
                     Navigator.of(context).push(
