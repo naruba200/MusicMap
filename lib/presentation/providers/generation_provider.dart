@@ -227,8 +227,48 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       }
 
       final songs = RecommendationEngine.topN(scored, settings.songCount);
+
+      // 3b. Album enrichment (FR-11): track.getSimilar carries no album
+      // data, so without this the Albums tab would always be empty.
+      // Look it up for the top songs (capped) before deriving albums.
+      final enriched = <ScoredTrack>[];
+      final enrichN = songs.length < 50 ? songs.length : 50;
+      for (var i = 0; i < songs.length; i++) {
+        if (_cancelled) return _abort();
+        final st = songs[i];
+        if (i < enrichN) {
+          _setProgress('Looking up album info', i, enrichN);
+          try {
+            final info = await _lfm.getTrackInfo(
+              RecommendationEngine.primaryArtist(st.track.artist),
+              st.track.title,
+            );
+            final album = info.album?.trim();
+            enriched.add(album == null || album.isEmpty
+                ? st
+                : ScoredTrack(
+                    track: Track(
+                      title: st.track.title,
+                      artist: st.track.artist,
+                      album: album,
+                      imageUrl: info.imageUrl ?? st.track.imageUrl,
+                      durationMs: st.track.durationMs,
+                      platformTrackId: st.track.platformTrackId,
+                    ),
+                    score: st.score,
+                    reasons: st.reasons,
+                  ));
+          } catch (_) {
+            enriched.add(st); // one bad lookup must not kill the run
+          }
+        } else {
+          enriched.add(st);
+        }
+      }
+      _setProgress('Looking up album info', enrichN, enrichN);
+
       final albums =
-          RecommendationEngine.deriveAlbums(songs, settings.albumCount);
+          RecommendationEngine.deriveAlbums(enriched, settings.albumCount);
       state = GenerationState(
         result: GenerationResult(
           songs: songs,
