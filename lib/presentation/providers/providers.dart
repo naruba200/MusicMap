@@ -226,8 +226,17 @@ final deepLinkHandlerProvider = Provider<void>((ref) {
     if (uri != null) openLink(uri.toString());
   });
 
-  ReceiveSharingIntent.instance.getTextStream().listen(openLink);
-  ReceiveSharingIntent.instance.getInitialText().then((text) {
-    if (text != null) openLink(text);
+  void openSharedFiles(List<SharedMediaFile> files) {
+    for (final f in files) {
+      // Shared text arrives as a media file of type text; the text itself
+      // is in `path`.
+      if (f.type == SharedMediaType.text) openLink(f.path);
+    }
+  }
+
+  ReceiveSharingIntent.instance.getMediaStream().listen(openSharedFiles);
+  ReceiveSharingIntent.instance.getInitialMedia().then((files) {
+    openSharedFiles(files);
+    ReceiveSharingIntent.instance.reset();
   });
 });
