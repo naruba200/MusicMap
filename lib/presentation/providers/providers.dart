@@ -24,6 +24,9 @@ import '../screens/playlist_detail_screen.dart';
 /// Global navigator key so deep links can push routes from providers.
 final navigatorKey = GlobalKey<NavigatorState>();
 
+/// Bottom-nav tab index: 0 Home, 1 News, 2 Favorites, 3 History, 4 Settings.
+final tabIndexProvider = StateProvider<int>((ref) => 0);
+
 // -- Core singletons --------------------------------------------------------
 
 final dioProvider = Provider<Dio>((ref) {

@@ -1,8 +1,11 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'core/theme.dart';
+import 'data/network/retry_interceptor.dart';
+import 'data/news/news_repository.dart';
 import 'data/repositories/favorites_repository.dart';
 import 'data/repositories/history_repository.dart';
 import 'data/repositories/playlist_repository.dart';
@@ -18,6 +21,9 @@ Future<void> main() async {
   final playlistRepo = await PlaylistRepository.open();
   final favoritesRepo = await FavoritesRepository.open();
   final historyRepo = await HistoryRepository.open();
+  final newsDio = Dio();
+  newsDio.interceptors.add(ConnectionRetryInterceptor(newsDio));
+  final newsRepo = await NewsRepository.open(newsDio);
 
   runApp(
     ProviderScope(
@@ -26,14 +32,14 @@ Future<void> main() async {
         playlistRepositoryProvider.overrideWithValue(playlistRepo),
         favoritesRepositoryProvider.overrideWithValue(favoritesRepo),
         historyRepositoryProvider.overrideWithValue(historyRepo),
+        newsRepositoryProvider.overrideWithValue(newsRepo),
       ],
       child: const MusicMapApp(),
     ),
   );
 }
 
-/// Bottom-nav tab index (spec §7: Home, News, Favorites, History, Settings).
-final _tabIndexProvider = StateProvider<int>((ref) => 0);
+/// Bottom-nav tab index (Home, News, Favorites, History, Settings).
 
 class MusicMapApp extends ConsumerWidget {
   const MusicMapApp({super.key});
@@ -80,13 +86,13 @@ class _RootScaffold extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final index = ref.watch(_tabIndexProvider);
+    final index = ref.watch(tabIndexProvider);
     return Scaffold(
       body: IndexedStack(index: index, children: _screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         onDestinationSelected: (i) =>
-            ref.read(_tabIndexProvider.notifier).state = i,
+            ref.read(tabIndexProvider.notifier).state = i,
         destinations: [
           for (final (icon, selectedIcon, label) in _destinations)
             NavigationDestination(

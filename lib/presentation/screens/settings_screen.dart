@@ -11,6 +11,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/constants.dart';
+import '../../data/news/news_source.dart';
+import '../providers/news_provider.dart';
 import '../providers/providers.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -101,12 +103,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const Divider(),
           _sectionHeader('News'),
-          const ListTile(
-            leading: Icon(Icons.newspaper_outlined),
-            title: Text('News sources'),
-            subtitle: Text('Coming in M4'),
-            enabled: false,
-          ),
+          _newsSourcesSection(ref),
           const Divider(),
           _sectionHeader('About'),
           const ListTile(
@@ -170,6 +167,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ],
         ),
       );
+
+  /// FR-27: per-source toggles; a failing source shows an "unavailable" note.
+  Widget _newsSourcesSection(WidgetRef ref) {
+    final repo = ref.watch(newsRepositoryProvider);
+    final sourceOk = ref.watch(newsProvider).sourceOk;
+    return Column(
+      children: [
+        for (final s in newsSources)
+          SwitchListTile(
+            title: Text(s.name),
+            subtitle: sourceOk[s.id] == false
+                ? const Text('Unavailable right now')
+                : null,
+            value: repo.isEnabled(s.id),
+            onChanged: (v) async {
+              await repo.setEnabled(s.id, v);
+              setState(() {});
+              // Re-fetch so the feed reflects the new source set.
+              await ref.read(newsProvider.notifier).refresh(force: true);
+            },
+          ),
+      ],
+    );
+  }
 
   /// FR-14b: one JSON bundle via the Android share sheet.
   Future<void> _exportData() async {
