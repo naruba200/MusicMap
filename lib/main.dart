@@ -10,6 +10,7 @@ import 'data/repositories/favorites_repository.dart';
 import 'data/repositories/history_repository.dart';
 import 'data/repositories/playlist_repository.dart';
 import 'data/repositories/settings_repository.dart';
+import 'presentation/providers/news_provider.dart';
 import 'presentation/providers/providers.dart';
 import 'presentation/screens/screens.dart';
 
