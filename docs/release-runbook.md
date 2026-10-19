@@ -16,7 +16,9 @@ applicationId = "com.naruba200.musicmap"
 never change after first upload.)
 
 ### Keystore (signing key — do once, back it up!)
-```powershell keytool -genkey -v -keystore D:\keys\musicmap-release.jks ` -keyalg RSA -keysize 2048 -validity 10000 -alias musicmap
+```powershell
+keytool -genkey -v -keystore D:\keys\musicmap-release.jks `
+  -keyalg RSA -keysize 2048 -validity 10000 -alias musicmap
 ```
 Back up `musicmap-release.jks` + passwords somewhere safe (USB drive /
 password manager). **Losing it = you can never update the app.**
@@ -30,8 +32,55 @@ keyAlias=musicmap
 storeFile=D:/keys/musicmap-release.jks
 ```
 Wire it in `android/app/build.gradle` (`signingConfigs.release` →
-`buildTypes.release.signingConfig`). Also add `key.properties` to
-`.gitignore` if you ever commit `android/`.
+`buildTypes.release.signingConfig`). **Note:** newer Flutter templates use
+Kotlin DSL (`build.gradle.kts`), not Groovy (`build.gradle`) — use the
+matching snippet below.
+
+Groovy (`build.gradle`):
+```gradle
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+```
+```gradle
+    signingConfigs {
+        release {
+            keyAlias keystoreProperties['keyAlias']
+            keyPassword keystoreProperties['keyPassword']
+            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
+            storePassword keystoreProperties['storePassword']
+        }
+    }
+```
+then in `buildTypes { release { ... } }` change
+`signingConfig signingConfigs.debug` → `signingConfig signingConfigs.release`.
+
+Kotlin DSL (`build.gradle.kts`):
+```kotlin
+import java.io.FileInputStream
+import java.util.Properties
+
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+```
+```kotlin
+    signingConfigs {
+        create("release") {
+            keyAlias = keystoreProperties["keyAlias"] as String
+            keyPassword = keystoreProperties["keyPassword"] as String
+            storeFile = file(keystoreProperties["storeFile"] as String)
+            storePassword = keystoreProperties["storePassword"] as String
+        }
+    }
+```
+then in `buildTypes { release { ... } }` change
+`signingConfig = signingConfigs.getByName("debug")` →
+`signingConfig = signingConfigs.getByName("release")`.
 
 ### GitHub Pages (privacy policy URL)
 Repo Settings → Pages → Deploy from branch → `main` → `/docs`.
