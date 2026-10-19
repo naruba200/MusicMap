@@ -9,10 +9,10 @@ import 'deezer_platform.dart';
 // Dev Mode changes block the Web API unless the app owner holds Premium, and
 // writing to Spotify (playlist creation) is impossible without user OAuth.
 // v1 covers intake via Deezer (no auth) and outbound links via Spotify search
-// URLs (no auth). The adapter (spotify_platform.dart, incl. the desktop
-// TEST-ONLY signInDesktop scaffolding) is kept for later; it is NOT in the
-// dropdown. token_store.dart / platform_oauth.dart remain as infra for its
-// return.
+// URLs (no auth). The adapter (spotify_platform.dart, cleaned of the desktop
+// TEST-ONLY signInDesktop scaffolding for the v1.0.0 release) is kept for
+// later; it is NOT in the dropdown. token_store.dart / platform_oauth.dart
+// remain as infra for its return.
 // NOTE: SoundCloudPlatform is parked — SoundCloud now requires an Artist Pro
 // account to register an API app (2026-10-18). The adapter
 // (soundcloud_platform.dart) is kept for later; it is NOT in the dropdown.
