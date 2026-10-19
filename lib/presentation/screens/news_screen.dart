@@ -8,7 +8,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/time_ago.dart';
-import '../../data/news/news_repository.dart';
 import '../../data/news/rss_parser.dart';
 import '../providers/news_provider.dart';
 import '../providers/providers.dart';

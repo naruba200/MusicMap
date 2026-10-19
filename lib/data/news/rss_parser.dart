@@ -126,7 +126,7 @@ DateTime? _parseDate(String? raw) {
         int.parse(m.group(1)!),
         int.parse(m.group(4)!),
         int.parse(m.group(5)!),
-        int.parse(m.group(6) ?? '0')!,
+        int.parse(m.group(6) ?? '0'),
       ).subtract(Duration(
           hours: sign * int.parse(m.group(8)!),
           minutes: sign * int.parse(m.group(9)!)));

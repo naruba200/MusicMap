@@ -1,34 +1,24 @@
-// Widget smoke tests for shared screen widgets (replaces the
-// flutter-create template test, which referenced a non-existent MyApp).
+// Widget smoke tests.
+//
+// The M0–M3 milestone placeholder screens (and their PlaceholderBody
+// widget) were replaced by real screens, so the old placeholder test was
+// removed (2026-10-19). Full widget tests with mocked repositories are
+// tracked in spec §15; this file keeps a smoke test so the widget harness
+// stays green in the meantime.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:music_map/presentation/screens/screens.dart';
+import 'package:music_map/core/theme.dart';
+import 'package:music_map/core/time_ago.dart';
 
 void main() {
-  testWidgets('PlaceholderBody renders its label and milestone',
-      (tester) async {
+  testWidgets('app dark theme builds and timeAgo renders', (tester) async {
     await tester.pumpWidget(
-      const MaterialApp(
-        home: PlaceholderBody(
-          icon: Icons.newspaper_outlined,
-          label: 'News',
-          milestone: 'M4: RSS feed',
-        ),
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(body: Text(timeAgo(DateTime.now()))),
       ),
     );
-    expect(find.text('News'), findsOneWidget);
-    expect(find.text('M4: RSS feed'), findsOneWidget);
-    expect(find.byIcon(Icons.newspaper_outlined), findsOneWidget);
-  });
-
-  testWidgets('Not-yet-built screens show their milestone placeholders',
-      (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: FavoritesScreen(),
-      ),
-    );
-    expect(find.text('Favorites'), findsOneWidget);
+    expect(find.text('just now'), findsOneWidget);
   });
 }
