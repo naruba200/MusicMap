@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:ui';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,27 +18,60 @@ import 'presentation/providers/providers.dart';
 import 'presentation/screens/screens.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Hive.initFlutter();
+  await runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
 
-  final settingsRepo = await SettingsRepository.open();
-  final playlistRepo = await PlaylistRepository.open();
-  final favoritesRepo = await FavoritesRepository.open();
-  final historyRepo = await HistoryRepository.open();
-  final newsDio = Dio();
-  newsDio.interceptors.add(ConnectionRetryInterceptor(newsDio));
-  final newsRepo = await NewsRepository.open(newsDio);
+    // Show a readable error screen instead of dying silently, so a
+    // startup failure can be reported with the actual error attached.
+    FlutterError.onError = (details) {
+      _showStartupError(details.exceptionAsString(), details.stack);
+    };
+    PlatformDispatcher.instance.onError = (error, stack) {
+      _showStartupError(error.toString(), stack);
+      return true; // handled — don't kill the isolate
+    };
 
+    await Hive.initFlutter();
+
+    final settingsRepo = await SettingsRepository.open();
+    final playlistRepo = await PlaylistRepository.open();
+    final favoritesRepo = await FavoritesRepository.open();
+    final historyRepo = await HistoryRepository.open();
+    final newsDio = Dio();
+    newsDio.interceptors.add(ConnectionRetryInterceptor(newsDio));
+    final newsRepo = await NewsRepository.open(newsDio);
+
+    runApp(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(settingsRepo),
+          playlistRepositoryProvider.overrideWithValue(playlistRepo),
+          favoritesRepositoryProvider.overrideWithValue(favoritesRepo),
+          historyRepositoryProvider.overrideWithValue(historyRepo),
+          newsRepositoryProvider.overrideWithValue(newsRepo),
+        ],
+        child: const MusicMapApp(),
+      ),
+    );
+  }, (error, stack) {
+    _showStartupError(error.toString(), stack);
+  });
+}
+
+/// Replaces the app with a plain screen carrying the crash details, so a
+/// startup failure is reportable without a connected debugger.
+void _showStartupError(String error, StackTrace? stack) {
   runApp(
-    ProviderScope(
-      overrides: [
-        settingsRepositoryProvider.overrideWithValue(settingsRepo),
-        playlistRepositoryProvider.overrideWithValue(playlistRepo),
-        favoritesRepositoryProvider.overrideWithValue(favoritesRepo),
-        historyRepositoryProvider.overrideWithValue(historyRepo),
-        newsRepositoryProvider.overrideWithValue(newsRepo),
-      ],
-      child: const MusicMapApp(),
+    MaterialApp(
+      home: Scaffold(
+        appBar: AppBar(title: const Text('Music Map — startup error')),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: SelectableText(
+            'Something went wrong on launch:\n\n$error\n\n${stack ?? ''}',
+          ),
+        ),
+      ),
     ),
   );
 }
