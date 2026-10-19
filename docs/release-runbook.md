@@ -41,7 +41,9 @@ Wait ~1 min, then check `https://naruba200.github.io/MusicMap/privacy.html`.
 
 ### Launcher icons
 ```powershell
-xcopy assets\launcher_icons\res android\app\src\main\res /E /Y
+# Icons ship as musicmap-launcher-icons.zip (sent in chat 2026-10-19 —
+# the GitHub connector can't push binary files). Extract it, then:
+xcopy launcher-icons\res android\app\src\main\res /E /Y
 ```
 (See `assets/launcher_icons/README.md`.)
 

@@ -3,6 +3,11 @@
 Generated 2026-10-19: violet music-note-in-map-pin on deep purple,
 matching the "Nocturne Electric" dark theme (#A855F7).
 
+> **Where the PNGs live:** the GitHub connector can't push binary files,
+> so the icons ship as `musicmap-launcher-icons.zip` (sent in chat,
+> 2026-10-19) instead of in this folder. Extract it next to this README
+> to get `res/` and `store/`.
+
 ## Install (on your dev machine, android/ is local-only)
 
 Copy the whole `res/` tree into your Android project:
