@@ -16,9 +16,7 @@ applicationId = "com.naruba200.musicmap"
 never change after first upload.)
 
 ### Keystore (signing key — do once, back it up!)
-```powershell
-keytool -genkey -v -keystore D:\keys\musicmap-release.jks `
-  -keyalg RSA -keysize 2048 -validity 10000 -alias musicmap
+```powershell keytool -genkey -v -keystore D:\keys\musicmap-release.jks ` -keyalg RSA -keysize 2048 -validity 10000 -alias musicmap
 ```
 Back up `musicmap-release.jks` + passwords somewhere safe (USB drive /
 password manager). **Losing it = you can never update the app.**
