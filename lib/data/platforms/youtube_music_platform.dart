@@ -17,6 +17,13 @@
 // Continuation responses come back as
 //   continuationContents.musicPlaylistShelfContinuation(.continuations…).
 //
+// Continuation reality check (2026-10-20, live): the section-list token
+// can instead lead to `continuationContents.sectionListContinuation`,
+// whose entries may be related-content carousels (no tracks at all) or a
+// fresh musicPlaylistShelfRenderer; and a truncated shelf carries its
+// OWN continuations token. fetchPlaylistTracks handles all shapes:
+// shelf token first, both continuation shapes, carousel = end of pages.
+//
 // It can break without notice when Google changes the internal API — the UI
 // shows a β badge, and every failure degrades to a clear PlatformException
 // that never breaks the other platforms (per-source isolation).
@@ -172,33 +179,75 @@ class YouTubeMusicPlatform extends MusicPlatform {
   @override
   Future<TrackPage> fetchPlaylistTracks(String playlistId,
       {Object? cursor}) async {
-    final Map<String, dynamic> data;
     if (cursor == null) {
-      data = await _browse(browseId: 'VL$playlistId');
+      final data = await _browse(browseId: 'VL$playlistId');
       final shelf = _shelfOf(data);
       if (shelf == null) {
         throw const PlatformException(
             'Could not read tracks from that YouTube Music playlist.');
       }
       final tracks = _itemsOf(shelf['contents']);
-      final next = _continuationOf(data);
+      // The track continuation hangs off the shelf itself when the
+      // shelf is truncated; the section-list token is the fallback
+      // (following it can also yield non-track sections — the
+      // continuation branch below ends paging cleanly then).
+      final next = _tokenOf(shelf) ?? _continuationOf(data);
       return TrackPage(
           tracks: tracks,
           hasMore: next != null && tracks.isNotEmpty,
           cursor: next);
     }
-    data = await _browse(continuation: cursor as String);
-    final cont = _asMap(_dig(data,
-        ['continuationContents', 'musicPlaylistShelfContinuation']));
-    if (cont == null) return const TrackPage(tracks: [], hasMore: false);
-    final tracks = _itemsOf(cont['contents']);
-    final next = _asMap(_dig(cont, [
+    final data = await _browse(continuation: cursor as String);
+    // Shape 1: musicPlaylistShelfContinuation — track items directly.
+    final shelfCont = _asMap(_dig(
+        data, ['continuationContents', 'musicPlaylistShelfContinuation']));
+    if (shelfCont != null) {
+      final tracks = _itemsOf(shelfCont['contents']);
+      final next = _tokenOf(shelfCont);
+      return TrackPage(
+          tracks: tracks,
+          hasMore: next != null && tracks.isNotEmpty,
+          cursor: next);
+    }
+    // Shape 2: sectionListContinuation wrapping a fresh shelf (seen
+    // live 2026-10-20; its other entries are related-content carousels,
+    // which carry no track shelf and end the paging).
+    final sectionCont = _asMap(
+        _dig(data, ['continuationContents', 'sectionListContinuation']));
+    if (sectionCont != null) {
+      final shelf = _shelfIn(sectionCont['contents']);
+      if (shelf != null) {
+        final tracks = _itemsOf(shelf['contents']);
+        final next = _tokenOf(shelf) ?? _tokenOf(sectionCont);
+        return TrackPage(
+            tracks: tracks,
+            hasMore: next != null && tracks.isNotEmpty,
+            cursor: next);
+      }
+    }
+    return const TrackPage(tracks: [], hasMore: false);
+  }
+
+  /// A renderer node's own continuation token, if it carries one.
+  String? _tokenOf(Map<String, dynamic> node) {
+    final token = _asMap(_dig(node, [
       'continuations',
       0,
-      'nextContinuationData'
-    ]))?['continuation'] as String?;
-    return TrackPage(
-        tracks: tracks, hasMore: next != null && tracks.isNotEmpty, cursor: next);
+      'nextContinuationData',
+    ]))?['continuation'];
+    return token is String && token.isNotEmpty ? token : null;
+  }
+
+  /// First musicPlaylistShelfRenderer inside a section contents list.
+  Map<String, dynamic>? _shelfIn(dynamic contents) {
+    if (contents is! List) return null;
+    for (final entry in contents) {
+      if (entry is Map<String, dynamic>) {
+        final shelf = _asMap(entry['musicPlaylistShelfRenderer']);
+        if (shelf != null) return shelf;
+      }
+    }
+    return null;
   }
 
   Map<String, dynamic>? _shelfOf(Map<String, dynamic> data) => _asMap(_dig(data, [
