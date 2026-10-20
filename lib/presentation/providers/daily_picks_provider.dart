@@ -1,6 +1,8 @@
 // Daily picks (FR-12b): a small song + album set regenerated once per day,
-// seeded from the user's favorited artists via tag top tracks/albums
-// (same engine family as Surprise me). Cached in Hive, date-keyed.
+// seeded from the user's favorited artists via the artist endpoints
+// (artist.getTopTracks / getTopAlbums — switched from tag lookups
+// 2026-10-20, §28; same engine family as Surprise me). Cached in Hive,
+// date-keyed.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -113,12 +115,12 @@ class DailyPicksNotifier extends StateNotifier<AsyncValue<DailyPicks?>> {
     final albumsByArtist = <String, List<TagAlbum>>{};
     for (final artist in seeds) {
       try {
-        songsByArtist[artist] = await lfm.getTagTopTracks(artist, limit: 10);
+        songsByArtist[artist] = await lfm.getArtistTopTracks(artist, limit: 10);
       } catch (_) {
         songsByArtist[artist] = const [];
       }
       try {
-        albumsByArtist[artist] = await lfm.getTagTopAlbums(artist, limit: 10);
+        albumsByArtist[artist] = await lfm.getArtistTopAlbums(artist, limit: 10);
       } catch (_) {
         albumsByArtist[artist] = const [];
       }

@@ -203,6 +203,31 @@ class LastFmClient {
     return _asList(albums).map(TagAlbum.fromJson).toList();
   }
 
+  /// An artist's own top tracks (FR-12b daily picks). NOT the same as
+  /// looking the artist up as a tag: tag.getTopTracks(artistName)
+  /// returns whatever the crowd tagged with that name, while
+  /// artist.getTopTracks is the artist's actual chart.
+  Future<List<TagTrack>> getArtistTopTracks(String artist,
+      {int limit = 10}) async {
+    final data = await _get('artist.getTopTracks', {
+      'artist': artist,
+      'limit': '$limit',
+    });
+    final tracks = (data['toptracks'] as Map?)?['track'];
+    return _asList(tracks).map(TagTrack.fromJson).toList();
+  }
+
+  /// An artist's own top albums (FR-12b daily picks).
+  Future<List<TagAlbum>> getArtistTopAlbums(String artist,
+      {int limit = 10}) async {
+    final data = await _get('artist.getTopAlbums', {
+      'artist': artist,
+      'limit': '$limit',
+    });
+    final albums = (data['topalbums'] as Map?)?['album'];
+    return _asList(albums).map(TagAlbum.fromJson).toList();
+  }
+
   /// Tags similar to [tag] — related-genre chips (FR-04e).
   Future<List<String>> getSimilarTags(String tag) async {
     final data = await _get('tag.getSimilar', {'tag': tag});

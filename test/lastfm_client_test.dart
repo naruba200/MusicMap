@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:music_map/data/lastfm/lastfm_client.dart';
 
@@ -63,4 +68,83 @@ void main() {
       expect(const LastFmException('boom').toString(), 'boom');
     });
   });
+
+  group('artist endpoints (daily picks)', () {
+    // Serves canned Last.fm envelopes and records the method requested.
+    late String requestedMethod;
+    late LastFmClient client;
+
+    setUp(() {
+      final dio = Dio();
+      dio.httpClientAdapter = _CannedAdapter((method) {
+        requestedMethod = method;
+        return switch (method) {
+          'artist.getTopTracks' => {
+              'toptracks': {
+                'track': [
+                  {
+                    'name': 'Idol',
+                    'listeners': '424242',
+                    'artist': {'name': 'YOASOBI'},
+                  }
+                ]
+              }
+            },
+          'artist.getTopAlbums' => {
+              'topalbums': {
+                'album': [
+                  {'name': 'THE BOOK', 'artist': 'YOASOBI'}
+                ]
+              }
+            },
+          _ => <String, dynamic>{},
+        };
+      });
+      client = LastFmClient(dio: dio, apiKey: 'test-key');
+    });
+
+    test('getArtistTopTracks hits artist.getTopTracks + parses toptracks',
+        () async {
+      final tracks = await client.getArtistTopTracks('YOASOBI');
+      expect(requestedMethod, 'artist.getTopTracks');
+      expect(tracks.single.title, 'Idol');
+      expect(tracks.single.artist, 'YOASOBI');
+      expect(tracks.single.listeners, 424242);
+    });
+
+    test('getArtistTopAlbums hits artist.getTopAlbums + parses topalbums',
+        () async {
+      final albums = await client.getArtistTopAlbums('YOASOBI');
+      expect(requestedMethod, 'artist.getTopAlbums');
+      expect(albums.single.name, 'THE BOOK');
+      expect(albums.single.artist, 'YOASOBI');
+    });
+  });
+}
+
+/// Answers with the payload [respond] builds for the requested
+/// Last.fm `method` query parameter.
+class _CannedAdapter implements HttpClientAdapter {
+  final Map<String, dynamic> Function(String method) respond;
+  _CannedAdapter(this.respond);
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    await requestStream?.drain<void>();
+    final method = options.queryParameters['method'] as String? ?? '';
+    return ResponseBody.fromString(
+      jsonEncode(respond(method)),
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
 }
