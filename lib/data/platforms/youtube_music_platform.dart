@@ -92,7 +92,13 @@ class YouTubeMusicPlatform extends MusicPlatform {
           if (browseId != null) 'browseId': browseId,
           if (continuation != null) 'continuation': continuation,
         },
-        options: Options(headers: {'User-Agent': _userAgent}),
+        options: Options(
+          headers: {'User-Agent': _userAgent},
+          // youtubei browse is a read-only query over POST — opt in to
+          // connection retries so TLS-resetting networks recover the way
+          // the GET platforms do. Never set this on an OAuth POST.
+          extra: const {'retryReadOnly': true},
+        ),
       );
       final data = res.data;
       if (data is Map<String, dynamic>) return data;
