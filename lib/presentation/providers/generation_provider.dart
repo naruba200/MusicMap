@@ -228,39 +228,43 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         );
       }
 
-      var scored = RecommendationEngine.scoreCandidates(
+      final scored = RecommendationEngine.scoreCandidates(
         seeds: selection.seeds,
         similarBySeed: similarBySeed,
       );
 
-      // 2. Discovery-modifier blending (FR-07b).
+      // 2. Discovery modifiers (FR-07b): fetch each tag's top tracks.
+      // They are injected by quota in step 4 (amended 2026-10-20, §28).
       final tags = _tagsFor(settings);
-      final modifierSets = <Set<String>>[];
+      final modifierByTag = <String, List<TagTrack>>{};
       for (var i = 0; i < tags.length; i++) {
         if (_cancelled) return _abort();
         _setProgress('Applying discovery filters', i, tags.length);
-        final top = await _lfm.getTagTopTracks(tags[i]);
-        modifierSets.add({
-          for (final t in top)
-            RecommendationEngine.normalizeKey(t.artist, t.title)
-        });
+        modifierByTag[tags[i]] = await _lfm.getTagTopTracks(tags[i]);
       }
-      scored = RecommendationEngine.applyModifierBoost(scored, modifierSets);
 
-      // 3. Fresh-finds boost (FR-07c).
+      // 3. Fresh finds (FR-07c): the chart list, also injected by quota.
+      var chartTracks = const <TagTrack>[];
       if (settings.freshFinds) {
         if (_cancelled) return _abort();
         _setProgress('Checking trending tracks', 0, 1);
-        final chart = await _lfm.getChartTopTracks();
-        scored = RecommendationEngine.applyFreshBoost(scored, {
-          for (final t in chart)
-            RecommendationEngine.normalizeKey(t.artist, t.title)
-        });
+        chartTracks = await _lfm.getChartTopTracks();
       }
 
-      final songs = RecommendationEngine.topN(scored, settings.songCount);
+      // 4. Blend the seed-similar core with the injections.
+      final seedKeys = {
+        for (final t in tracks)
+          RecommendationEngine.normalizeKey(t.artist, t.title)
+      };
+      final songs = RecommendationEngine.blendWithInjections(
+        core: scored,
+        modifierByTag: modifierByTag,
+        chartTracks: chartTracks,
+        total: settings.songCount,
+        seedKeys: seedKeys,
+      );
 
-      // 3b. Album enrichment (FR-11): track.getSimilar carries no album
+      // 5. Album enrichment (FR-11): track.getSimilar carries no album
       // data, so without this the Albums tab would always be empty.
       // Look it up for the top songs (capped) before deriving albums.
       final enriched = <ScoredTrack>[];
@@ -338,19 +342,15 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         _setProgress('Exploring ${tags[i]}', i, tags.length);
         topByTag[tags[i]] = await _lfm.getTagTopTracks(tags[i]);
       }
-      Set<String>? trending;
+      var chartTracks = const <TagTrack>[];
       if (settings.freshFinds) {
         if (_cancelled) return _abort();
         _setProgress('Checking trending tracks', 0, 1);
-        final chart = await _lfm.getChartTopTracks();
-        trending = {
-          for (final t in chart)
-            RecommendationEngine.normalizeKey(t.artist, t.title)
-        };
+        chartTracks = await _lfm.getChartTopTracks();
       }
       final songs = RecommendationEngine.surpriseSongs(
         topByTag: topByTag,
-        trendingKeys: trending,
+        chartTracks: chartTracks,
         count: settings.songCount,
       );
 

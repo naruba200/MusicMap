@@ -116,27 +116,118 @@ void main() {
     });
   });
 
-  group('boosts', () {
-    List<ScoredTrack> one(double score) => [
-          ScoredTrack(track: _t('A', 'T'), score: score, reasons: const [])
-        ];
+  group('blendWithInjections', () {
+    ScoredTrack s(String artist, String title, double score) => ScoredTrack(
+        track: _t(artist, title), score: score, reasons: const ['seed']);
+    TagTrack tt(String artist, String title, [int listeners = 100]) =>
+        TagTrack(artist: artist, title: title, listeners: listeners);
+    List<ScoredTrack> coreOf(int n) =>
+        [for (var i = 0; i < n; i++) s('Core$i', 'Song$i', (n - i) * 10.0)];
+    int withReason(List<ScoredTrack> list, String reason) =>
+        list.where((e) => e.reasons.contains(reason)).length;
 
-    test('modifier boost multiplies by (1 + 0.5 * tagHits)', () {
-      final key = RecommendationEngine.normalizeKey('A', 'T');
-      final boosted = RecommendationEngine.applyModifierBoost(
-          one(2.0), [{key}, {key}, {'other - x'}]);
-      expect(boosted.single.score, closeTo(4.0, 1e-9)); // 2 hits
-      final single = RecommendationEngine.applyModifierBoost(one(2.0), [{key}]);
-      expect(single.single.score, closeTo(3.0, 1e-9)); // 1 hit
+    test('no injections returns the core top-N untouched', () {
+      final out = RecommendationEngine.blendWithInjections(
+        core: coreOf(5),
+        modifierByTag: const {},
+        chartTracks: const [],
+        total: 3,
+        seedKeys: const {},
+      );
+      expect(out.length, 3);
+      expect(out.map((e) => e.track.title), ['Song0', 'Song1', 'Song2']);
+      expect(out.map((e) => e.score), [50.0, 40.0, 30.0]);
     });
 
-    test('fresh boost multiplies trending candidates by 1.3', () {
-      final key = RecommendationEngine.normalizeKey('A', 'T');
-      final boosted = RecommendationEngine.applyFreshBoost(one(2.0), {key});
-      expect(boosted.single.score, closeTo(2.6, 1e-9));
-      final untouched =
-          RecommendationEngine.applyFreshBoost(one(2.0), {'zzz - q'});
-      expect(untouched.single.score, 2.0);
+    test('modifier tracks fill ~1/3 of the list with their tag reason', () {
+      final out = RecommendationEngine.blendWithInjections(
+        core: coreOf(6),
+        modifierByTag: {
+          'rock': [tt('M1', 'Mod One'), tt('M2', 'Mod Two'), tt('M3', 'Mod 3')]
+        },
+        chartTracks: const [],
+        total: 6,
+        seedKeys: const {},
+      );
+      expect(out.length, 6);
+      expect(withReason(out, 'Popular in rock'), 2); // (6/3).round()
+      expect(
+          out.where((e) => e.reasons.contains('Popular in rock')).map((e) => e.track.title),
+          ['Mod One', 'Mod Two']);
+      expect(out.first.track.title, 'Song0'); // core opens
+    });
+
+    test('seed-playlist and core tracks are never injected', () {
+      final seedKey = RecommendationEngine.normalizeKey('Seed', 'Mine');
+      final out = RecommendationEngine.blendWithInjections(
+        core: coreOf(6),
+        modifierByTag: {
+          'rock': [
+            tt('Seed', 'Mine'), // in the seed playlist
+            tt('Core0', 'Song0'), // already in the core list
+            tt('New', 'Fresh Pick'),
+          ]
+        },
+        chartTracks: const [],
+        total: 6,
+        seedKeys: {seedKey},
+      );
+      final injected =
+          out.where((e) => e.reasons.contains('Popular in rock')).toList();
+      expect(injected.length, 1);
+      expect(injected.single.track.title, 'Fresh Pick');
+      final keys = out
+          .map((e) => RecommendationEngine.normalizeKey(
+              e.track.artist, e.track.title))
+          .toList();
+      expect(keys.toSet().length, keys.length); // no duplicates anywhere
+    });
+
+    test('fresh quota is ~1/5 and yields first when the 1/2 cap binds', () {
+      final out = RecommendationEngine.blendWithInjections(
+        core: coreOf(9),
+        modifierByTag: {
+          'rock': [for (var i = 0; i < 9; i++) tt('M$i', 'Mod$i')]
+        },
+        chartTracks: [for (var i = 0; i < 9; i++) tt('C$i', 'Chart$i')],
+        total: 9,
+        seedKeys: const {},
+      );
+      expect(out.length, 9);
+      expect(withReason(out, 'Popular in rock'), 3); // (9/3).round()
+      expect(withReason(out, 'Trending now'), 1); // 2, cut to cap 4 - 3
+    });
+
+    test('pools backfill when the core runs short', () {
+      final out = RecommendationEngine.blendWithInjections(
+        core: coreOf(2),
+        modifierByTag: {
+          'rock': [for (var i = 0; i < 6; i++) tt('M$i', 'Mod$i')]
+        },
+        chartTracks: const [],
+        total: 6,
+        seedKeys: const {},
+      );
+      expect(out.length, 6);
+      expect(withReason(out, 'Popular in rock'), 4); // 2 quota + 2 backfill
+    });
+
+    test('multiple tags contribute round-robin by rank', () {
+      final out = RecommendationEngine.blendWithInjections(
+        core: coreOf(6),
+        modifierByTag: {
+          'aaa': [tt('A1', 'First A'), tt('A2', 'Second A')],
+          'bbb': [tt('B1', 'First B'), tt('B2', 'Second B')],
+        },
+        chartTracks: const [],
+        total: 6,
+        seedKeys: const {},
+      );
+      final injected = out
+          .where((e) => e.reasons.single.startsWith('Popular in'))
+          .map((e) => e.track.title)
+          .toSet();
+      expect(injected, {'First A', 'First B'}); // rank 0 of each tag
     });
   });
 
@@ -175,6 +266,31 @@ void main() {
       expect(songs[0].track.title, 'Hit');
       expect(songs[0].score, 200);
       expect(songs[0].reasons.single, contains('pop'));
+    });
+
+    test('fresh injects chart tracks instead of hard-filtering', () {
+      final songs = RecommendationEngine.surpriseSongs(
+        topByTag: {
+          'rock': [
+            for (var i = 0; i < 10; i++)
+              TagTrack(artist: 'T$i', title: 'Tag$i', listeners: 100 - i),
+          ],
+        },
+        chartTracks: [
+          const TagTrack(artist: 'T0', title: 'Tag0', listeners: 999), // dup
+          for (var i = 0; i < 4; i++)
+            TagTrack(artist: 'C$i', title: 'Chart$i', listeners: 500 - i),
+        ],
+        count: 10,
+      );
+      expect(songs.length, 10);
+      // (10/5).round() = 2 chart injections, NOT a filter to overlaps only.
+      expect(songs.where((e) => e.reasons.contains('Trending now')).length, 2);
+      final keys = songs
+          .map((e) => RecommendationEngine.normalizeKey(
+              e.track.artist, e.track.title))
+          .toList();
+      expect(keys.toSet().length, keys.length); // the dup chart track stayed out
     });
   });
 }

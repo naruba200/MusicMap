@@ -176,29 +176,160 @@ class RecommendationEngine {
     return result;
   }
 
-  /// Discovery-modifier blending (FR-07b): score × (1 + 0.5 × tagHits).
-  static List<ScoredTrack> applyModifierBoost(
-      List<ScoredTrack> candidates, List<Set<String>> modifierKeySets) {
-    if (modifierKeySets.isEmpty) return candidates;
-    final boosted = candidates.map((c) {
-      final key = normalizeKey(c.track.artist, c.track.title);
-      final hits = modifierKeySets.where((s) => s.contains(key)).length;
-      return hits == 0 ? c : c.withScore(c.score * (1 + 0.5 * hits));
-    }).toList();
-    boosted.sort((a, b) => b.score.compareTo(a.score));
-    return boosted;
-  }
+  /// Slot-based injection (FR-07b/07c as amended 2026-10-20, §28):
+  /// merge [core] with tracks injected from the discovery modifiers and
+  /// the Fresh-finds chart, by quota instead of by score — seed scores
+  /// (similarity ranks) and tag listener counts are incommensurable,
+  /// and the old overlap-boost changed nothing when the overlap was
+  /// empty, which was nearly always.
+  ///
+  /// - Modifier pool: round-robin across [modifierByTag] in map order,
+  ///   each tag's rank order preserved; quota ≈ total/3.
+  /// - Fresh pool: [chartTracks] in rank order; quota ≈ total/5.
+  /// - Combined injected quota is capped at total/2; fresh yields
+  ///   first when the cap binds.
+  /// - Injected tracks never repeat the seed playlist ([seedKeys]),
+  ///   the core list, or each other. If a pool runs dry the others
+  ///   backfill; core always keeps the remaining slots.
+  /// - Sources interleave by quota progress (taken/desired, core wins
+  ///   ties) so injections spread evenly through the list.
+  /// - An injected track's score sits just under the previously
+  ///   emitted track's, so album derivation (FR-11) ranks it by its
+  ///   list position; reasons are "Popular in {tag}" / "Trending now".
+  static List<ScoredTrack> blendWithInjections({
+    required List<ScoredTrack> core,
+    required Map<String, List<TagTrack>> modifierByTag,
+    required List<TagTrack> chartTracks,
+    required int total,
+    required Set<String> seedKeys,
+  }) {
+    if (total <= 0) return const [];
+    final coreKeys = {
+      for (final c in core) normalizeKey(c.track.artist, c.track.title)
+    };
+    final blocked = {...seedKeys, ...coreKeys};
+    final seen = <String>{};
 
-  /// Fresh-finds boost (FR-07c): ×1.3 for candidates in the trending set.
-  static List<ScoredTrack> applyFreshBoost(
-      List<ScoredTrack> candidates, Set<String> trendingKeys) {
-    if (trendingKeys.isEmpty) return candidates;
-    return [
-      for (final c in candidates)
-        trendingKeys.contains(normalizeKey(c.track.artist, c.track.title))
-            ? c.withScore(c.score * 1.3)
-            : c
-    ]..sort((a, b) => b.score.compareTo(a.score));
+    // Modifier pool: round-robin by rank across tags.
+    final modPool = <(TagTrack, String)>[]; // (track, tag)
+    if (modifierByTag.isNotEmpty) {
+      final tags = modifierByTag.keys.toList();
+      final maxLen = modifierByTag.values
+          .fold(0, (m, l) => l.length > m ? l.length : m);
+      for (var rank = 0; rank < maxLen; rank++) {
+        for (final tag in tags) {
+          final list = modifierByTag[tag]!;
+          if (rank >= list.length) continue;
+          final t = list[rank];
+          if (t.artist.trim().isEmpty || t.title.trim().isEmpty) continue;
+          final key = normalizeKey(t.artist, t.title);
+          if (blocked.contains(key) || !seen.add(key)) continue;
+          modPool.add((t, tag));
+        }
+      }
+    }
+
+    // Fresh pool: chart order.
+    final freshPool = <TagTrack>[];
+    for (final t in chartTracks) {
+      if (t.artist.trim().isEmpty || t.title.trim().isEmpty) continue;
+      final key = normalizeKey(t.artist, t.title);
+      if (blocked.contains(key) || !seen.add(key)) continue;
+      freshPool.add(t);
+    }
+
+    // Quotas (spec §28): modifiers ~1/3, fresh ~1/5, combined ≤ 1/2.
+    var modQuota = modifierByTag.isEmpty ? 0 : (total / 3).round();
+    var freshQuota = chartTracks.isEmpty ? 0 : (total / 5).round();
+    final cap = total ~/ 2;
+    if (modQuota + freshQuota > cap) {
+      freshQuota = freshQuota > cap - modQuota ? cap - modQuota : freshQuota;
+      if (freshQuota < 0) freshQuota = 0;
+      if (modQuota > cap) modQuota = cap;
+    }
+
+    // Desired takes, with backfill when a source runs dry.
+    var mTake = modQuota < modPool.length ? modQuota : modPool.length;
+    var fTake = freshQuota < freshPool.length ? freshQuota : freshPool.length;
+    var cTake = total - mTake - fTake;
+    if (cTake > core.length) cTake = core.length;
+    var leftover = total - cTake - mTake - fTake;
+    if (leftover > 0) {
+      final mExtra = modPool.length - mTake;
+      final addM = mExtra < leftover ? mExtra : leftover;
+      mTake += addM;
+      leftover -= addM;
+    }
+    if (leftover > 0) {
+      final fExtra = freshPool.length - fTake;
+      final addF = fExtra < leftover ? fExtra : leftover;
+      fTake += addF;
+      leftover -= addF;
+    }
+    if (leftover > 0) {
+      final cExtra = core.length - cTake;
+      final addC = cExtra < leftover ? cExtra : leftover;
+      cTake += addC;
+    }
+
+    // Fair interleave by quota progress; priority core → modifier →
+    // fresh breaks ties (including the opening slot).
+    final result = <ScoredTrack>[];
+    var ci = 0, mi = 0, fi = 0;
+    var prevScore = core.isNotEmpty ? core.first.score : 1.0;
+    double progress(int taken, int want) =>
+        want <= 0 ? double.infinity : taken / want;
+    while (result.length < total) {
+      final canCore = ci < cTake;
+      final canMod = mi < mTake;
+      final canFresh = fi < fTake;
+      if (!canCore && !canMod && !canFresh) break;
+      var pick = -1; // 0 core, 1 modifier, 2 fresh
+      var best = double.infinity;
+      if (canCore) {
+        final p = progress(ci, cTake);
+        if (p < best) {
+          best = p;
+          pick = 0;
+        }
+      }
+      if (canMod) {
+        final p = progress(mi, mTake);
+        if (p < best) {
+          best = p;
+          pick = 1;
+        }
+      }
+      if (canFresh) {
+        final p = progress(fi, fTake);
+        if (p < best) {
+          best = p;
+          pick = 2;
+        }
+      }
+      if (pick == 0) {
+        final c = core[ci++];
+        prevScore = c.score;
+        result.add(c);
+      } else if (pick == 1) {
+        final (t, tag) = modPool[mi++];
+        prevScore = prevScore * 0.99;
+        result.add(ScoredTrack(
+          track: Track(title: t.title, artist: t.artist),
+          score: prevScore,
+          reasons: ['Popular in $tag'],
+        ));
+      } else {
+        final t = freshPool[fi++];
+        prevScore = prevScore * 0.99;
+        result.add(ScoredTrack(
+          track: Track(title: t.title, artist: t.artist),
+          score: prevScore,
+          reasons: const ['Trending now'],
+        ));
+      }
+    }
+    return result;
   }
 
   /// Take the top N (or fewer if the pool is exhausted).
@@ -237,11 +368,13 @@ class RecommendationEngine {
   }
 
   /// Surprise-me songs (FR-19): merge tag top tracks, dedupe (keep max
-  /// listeners), rank by listeners desc. With Fresh finds on, intersect the
-  /// trending set first (falling back to the full merge when empty).
+  /// listeners), rank by listeners desc. With Fresh finds on, chart
+  /// tracks are *injected* at the fresh quota via [blendWithInjections]
+  /// (amended 2026-10-20, §28 — the old behavior hard-filtered the
+  /// whole list down to chart-overlapping tracks only).
   static List<ScoredTrack> surpriseSongs({
     required Map<String, List<TagTrack>> topByTag,
-    Set<String>? trendingKeys,
+    List<TagTrack> chartTracks = const [],
     required int count,
   }) {
     final best = <String, TagTrack>{};
@@ -256,20 +389,24 @@ class RecommendationEngine {
         }
       }
     });
-    var keys = best.keys.toList();
-    if (trendingKeys != null && trendingKeys.isNotEmpty) {
-      final inter = keys.where(trendingKeys.contains).toList();
-      if (inter.isNotEmpty) keys = inter;
-    }
-    keys.sort((a, b) => best[b]!.listeners.compareTo(best[a]!.listeners));
-    return [
-      for (final k in keys.take(count))
+    final keys = best.keys.toList()
+      ..sort((a, b) => best[b]!.listeners.compareTo(best[a]!.listeners));
+    final base = [
+      for (final k in keys)
         ScoredTrack(
           track: Track(title: best[k]!.title, artist: best[k]!.artist),
           score: best[k]!.listeners.toDouble(),
           reasons: ['Popular in ${tagOf[k]}'],
         )
     ];
+    if (chartTracks.isEmpty) return base.take(count).toList();
+    return blendWithInjections(
+      core: base,
+      modifierByTag: const {},
+      chartTracks: chartTracks,
+      total: count,
+      seedKeys: const {},
+    );
   }
 
   /// Surprise-me albums (FR-19): merge tag top albums, dedupe, keep
