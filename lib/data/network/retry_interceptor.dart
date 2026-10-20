@@ -12,6 +12,11 @@ import 'package:dio/dio.dart';
 /// Only safe methods (GET/HEAD/OPTIONS) are retried — never POSTs such as the
 /// OAuth token exchange, where an auth code is single-use and a blind retry
 /// could burn it.
+///
+/// Exception: a POST that is a read-only query in disguise (e.g. the
+/// `youtubei` browse calls — they change no server state) may opt in
+/// per-request with `Options(extra: {'retryReadOnly': true})`. OAuth and
+/// other state-changing POSTs never set it, so they stay unretried.
 class ConnectionRetryInterceptor extends Interceptor {
   final Dio _dio;
   final int maxAttempts;
@@ -29,8 +34,10 @@ class ConnectionRetryInterceptor extends Interceptor {
   Future<void> onError(DioException err, ErrorInterceptorHandler handler) async {
     final opts = err.requestOptions;
     final attempt = (opts.extra['retryAttempt'] as int?) ?? 0;
+    final retryableMethod = _idempotent.contains(opts.method.toUpperCase()) ||
+        opts.extra['retryReadOnly'] == true;
     if (attempt + 1 < maxAttempts &&
-        _idempotent.contains(opts.method.toUpperCase()) &&
+        retryableMethod &&
         _isConnectionFailure(err)) {
       opts.extra['retryAttempt'] = attempt + 1;
       await Future<void>.delayed(baseDelay * (attempt + 1));
