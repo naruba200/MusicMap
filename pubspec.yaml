@@ -1,5 +1,5 @@
-name: music_man
-description: Music Man - playlist-based song & album recommendations with a personalized music-news feed.
+name: music_map
+description: Music Map - playlist-based song & album recommendations with a personalized music-news feed.
 publish_to: "none"
 version: 1.0.0+1
 
