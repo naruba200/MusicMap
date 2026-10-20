@@ -1,4 +1,4 @@
-package com.example.music_map
+package com.naruba200.musicmap
 
 import io.flutter.embedding.android.FlutterActivity
 

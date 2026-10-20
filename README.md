@@ -1,8 +1,8 @@
-# Music Map
+# Music Man
 
 Paste a playlist link. Get music you'll actually like.
 
-Music Map turns any Deezer or YouTube Music playlist into personalized song
+Music Man turns any Deezer or YouTube Music playlist into personalized song
 and album recommendations — powered by real listening data, with
 plain-English explanations of *why* each pick fits your taste.
 

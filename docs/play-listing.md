@@ -1,8 +1,8 @@
-# Play Store listing draft — Music Map (v1.0.0)
+# Play Store listing draft — Music Man (v1.0.0)
 
 ## Title (max 30 chars)
 ```
-Music Map — Song Recommender
+Music Man — Song Recommender
 ```
 
 ## Short description (max 80 chars)

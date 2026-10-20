@@ -108,7 +108,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _sectionHeader('About'),
           const ListTile(
             leading: Icon(Icons.info_outline),
-            title: Text('Music Map'),
+            title: Text('Music Man'),
             subtitle: Text('Turn a playlist into your next favorite songs.\n'
                 'All data stays on this device — no account, no cloud.'),
           ),
@@ -213,7 +213,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       };
       final dir = await getTemporaryDirectory();
       final file = File(
-          '${dir.path}/music-map-export-${DateTime.now().millisecondsSinceEpoch}.json');
+          '${dir.path}/music-man-export-${DateTime.now().millisecondsSinceEpoch}.json');
       await file.writeAsString(
           const JsonEncoder.withIndent('  ').convert(bundle));
       await Share.shareXFiles(

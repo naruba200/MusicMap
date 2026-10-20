@@ -50,7 +50,7 @@ Future<void> main() async {
           historyRepositoryProvider.overrideWithValue(historyRepo),
           newsRepositoryProvider.overrideWithValue(newsRepo),
         ],
-        child: const MusicMapApp(),
+        child: const MusicManApp(),
       ),
     );
   }, (error, stack) {
@@ -64,7 +64,7 @@ void _showStartupError(String error, StackTrace? stack) {
   runApp(
     MaterialApp(
       home: Scaffold(
-        appBar: AppBar(title: const Text('Music Map — startup error')),
+        appBar: AppBar(title: const Text('Music Man — startup error')),
         body: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: SelectableText(
@@ -78,8 +78,8 @@ void _showStartupError(String error, StackTrace? stack) {
 
 /// Bottom-nav tab index (Home, News, Favorites, History, Settings).
 
-class MusicMapApp extends ConsumerWidget {
-  const MusicMapApp({super.key});
+class MusicManApp extends ConsumerWidget {
+  const MusicManApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -92,7 +92,7 @@ class MusicMapApp extends ConsumerWidget {
     });
 
     return MaterialApp(
-      title: 'Music Map',
+      title: 'Music Man',
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.system,

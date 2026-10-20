@@ -97,7 +97,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final saved = ref.watch(savedPlaylistsProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Music Map')),
+      appBar: AppBar(title: const Text('Music Man')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -323,7 +323,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           const SizedBox(height: 16),
           Text(
             'How it works: import a playlist, tune the discovery filters, and '
-            'Music Map finds similar songs and albums via Last.fm — no account, '
+            'Music Man finds similar songs and albums via Last.fm — no account, '
             'everything stays on your device.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
