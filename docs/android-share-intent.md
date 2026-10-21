@@ -5,12 +5,12 @@ The Flutter code is complete, but two intent-filters must be added to
 the `MAIN` / `LAUNCHER` intent-filter:
 
 ```xml
-<!-- 1. Spotify OAuth redirect: musicmap://callback?code=... -->
+<!-- 1. Spotify OAuth redirect: musicman://callback?code=... -->
 <intent-filter>
     <action android:name="android.intent.action.VIEW" />
     <category android:name="android.intent.category.DEFAULT" />
     <category android:name="android.intent.category.BROWSABLE" />
-    <data android:scheme="musicmap" android:host="callback" />
+    <data android:scheme="musicman" android:host="callback" />
 </intent-filter>
 
 <!-- 2. Receive shared playlist links (text/plain) from other apps -->
@@ -26,7 +26,7 @@ Notes:
 - `flutter create --platforms=android .` does not overwrite an existing
   `AndroidManifest.xml`; if you already edited it, your filters survive.
 - The redirect URI registered in the Spotify dashboard must be exactly
-  `musicmap://callback`.
+  `musicman://callback`.
 - Deep links (`app_links`) and shared text (`receive_sharing_intent`) are
   both handled in `lib/presentation/providers/providers.dart`
   (`deepLinkHandlerProvider`): any recognized playlist URL opens the

@@ -1,8 +1,8 @@
 // Unit tests for the For You ranking (M4, FR-24).
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:music_map/data/news/for_you.dart';
-import 'package:music_map/data/news/rss_parser.dart';
+import 'package:music_man/data/news/for_you.dart';
+import 'package:music_man/data/news/rss_parser.dart';
 
 NewsArticle _a(String title,
     {String? summary, DateTime? date, String link = ''}) {

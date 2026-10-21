@@ -10,7 +10,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:music_map/data/platforms/youtube_music_platform.dart';
+import 'package:music_man/data/platforms/youtube_music_platform.dart';
 
 Map<String, dynamic> _item(String title, String artist, String videoId) => {
       'musicResponsiveListItemRenderer': {

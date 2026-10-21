@@ -1,7 +1,7 @@
 // Unit tests for the pure-Dart RSS/Atom parser (M4, FR-21/23).
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:music_map/data/news/rss_parser.dart';
+import 'package:music_man/data/news/rss_parser.dart';
 
 const _rss = '''
 <?xml version="1.0" encoding="UTF-8"?>

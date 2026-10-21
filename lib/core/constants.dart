@@ -1,20 +1,20 @@
-// App-wide constants for Music Map (spec §8, §10).
+// App-wide constants for Music Man (spec §8, §10).
 // API keys / client IDs ship as placeholders — see README "Setup".
 
 /// Spotify app client ID. Create one at https://developer.spotify.com/dashboard
-/// and set the redirect URI to `musicmap://callback`.
-const String spotifyClientId = '942dafb5bf404abca84149894a259b40';
+/// and set the redirect URI to `musicman://callback`.
+const String spotifyClientId = 'YOUR_SPOTIFY_CLIENT_ID';
 
 /// Custom scheme used for the Spotify OAuth redirect (must match the
 /// AndroidManifest intent-filter — see docs/android-share-intent.md).
-const String oauthRedirectUri = 'musicmap://callback';
+const String oauthRedirectUri = 'musicman://callback';
 
 /// SoundCloud API client ID (register an app at https://developers.soundcloud.com).
 const String soundCloudClientId = 'YOUR_SOUNDCLOUD_CLIENT_ID';
 
 /// Last.fm API key (https://www.last.fm/api/account/create). Used by the
 /// recommendation engine in M2.
-const String lastFmApiKey = 'afe16fee1f96d0177b7d691f4b7bc89c';
+const String lastFmApiKey = 'YOUR_LASTFM_API_KEY';
 
 /// Supported platform IDs.
 class PlatformIds {

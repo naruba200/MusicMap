@@ -11,7 +11,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:music_map/data/network/retry_interceptor.dart';
+import 'package:music_man/data/network/retry_interceptor.dart';
 
 /// Fails with a connection error for the first [failures] requests,
 /// then answers 200. Counts every request it sees.

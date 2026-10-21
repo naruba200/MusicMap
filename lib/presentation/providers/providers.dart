@@ -236,7 +236,7 @@ final savedPlaylistsProvider =
 // -- Deep links -------------------------------------------------------------
 
 /// Listens for incoming playlist links and opens the detail screen:
-/// - deep links via app_links (https links, musicmap:// URIs),
+/// - deep links via app_links (https links, musicman:// URIs),
 /// - shared text via receive_sharing_intent (Android share sheet).
 /// Call once from the app root.
 final deepLinkHandlerProvider = Provider<void>((ref) {

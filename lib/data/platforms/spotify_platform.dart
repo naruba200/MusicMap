@@ -2,7 +2,7 @@
 //
 // Setup: create an app at https://developer.spotify.com/dashboard, set
 // spotifyClientId in lib/core/constants.dart, and register the redirect URI
-// `musicmap://callback` (plus the AndroidManifest intent-filter — see
+// `musicman://callback` (plus the AndroidManifest intent-filter — see
 // docs/android-share-intent.md).
 
 import 'dart:async';
@@ -69,7 +69,7 @@ class SpotifyPlatform extends MusicPlatform {
 
     final code = await _redirectListener.waitForCode(
       launch: () => launchUrl(authUri, mode: LaunchMode.externalApplication),
-      redirectScheme: 'musicmap',
+      redirectScheme: 'musicman',
     );
     if (code == null) return false; // user cancelled
 

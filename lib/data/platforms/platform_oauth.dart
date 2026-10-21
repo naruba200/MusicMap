@@ -1,4 +1,4 @@
-// Listens for the OAuth redirect (musicmap://callback?code=...) via app_links.
+// Listens for the OAuth redirect (musicman://callback?code=...) via app_links.
 
 import 'dart:async';
 

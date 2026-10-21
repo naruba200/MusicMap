@@ -213,12 +213,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       };
       final dir = await getTemporaryDirectory();
       final file = File(
-          '${dir.path}/music-man-export-${DateTime.now().millisecondsSinceEpoch}.json');
+          '${dir.path}/music-map-export-${DateTime.now().millisecondsSinceEpoch}.json');
       await file.writeAsString(
           const JsonEncoder.withIndent('  ').convert(bundle));
       await Share.shareXFiles(
         [XFile(file.path, mimeType: 'application/json')],
-        text: 'Music Map data export',
+        text: 'Music Man data export',
       );
     } catch (e) {
       if (mounted) {

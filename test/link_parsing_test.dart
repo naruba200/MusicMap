@@ -2,14 +2,14 @@
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:music_map/core/constants.dart';
-import 'package:music_map/data/auth/token_store.dart';
-import 'package:music_map/data/platforms/deezer_platform.dart';
-import 'package:music_map/data/platforms/platform_oauth.dart';
-import 'package:music_map/data/platforms/platform_registry.dart';
-import 'package:music_map/data/platforms/soundcloud_platform.dart';
-import 'package:music_map/data/platforms/spotify_platform.dart';
-import 'package:music_map/data/platforms/youtube_music_platform.dart';
+import 'package:music_man/core/constants.dart';
+import 'package:music_man/data/auth/token_store.dart';
+import 'package:music_man/data/platforms/deezer_platform.dart';
+import 'package:music_man/data/platforms/platform_oauth.dart';
+import 'package:music_man/data/platforms/platform_registry.dart';
+import 'package:music_man/data/platforms/soundcloud_platform.dart';
+import 'package:music_man/data/platforms/spotify_platform.dart';
+import 'package:music_man/data/platforms/youtube_music_platform.dart';
 
 void main() {
   final dio = Dio();

@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:music_map/data/lastfm/lastfm_client.dart';
+import 'package:music_man/data/lastfm/lastfm_client.dart';
 
 void main() {
   group('SimilarTrack.fromJson', () {

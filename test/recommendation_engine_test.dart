@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:music_map/data/engine/recommendation_engine.dart';
-import 'package:music_map/data/lastfm/lastfm_client.dart';
-import 'package:music_map/data/models/music_models.dart';
+import 'package:music_man/data/engine/recommendation_engine.dart';
+import 'package:music_man/data/lastfm/lastfm_client.dart';
+import 'package:music_man/data/models/music_models.dart';
 
 Track _t(String artist, String title, {String? album}) =>
     Track(artist: artist, title: title, album: album);

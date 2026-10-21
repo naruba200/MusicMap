@@ -1,4 +1,4 @@
-# Release runbook — Music Map v1.0.0 (M5)
+# Release runbook — Music Man v1.0.0 (M5)
 
 ## 0. One-time setup (do once)
 
@@ -7,14 +7,42 @@ Your `android/` folder is local-only (not in the repo). In
 `android/app/build.gradle`, set:
 
 ```gradle
-namespace = "com.naruba200.musicmap"
+namespace = "com.naruba200.musicman"
 ...
-applicationId = "com.naruba200.musicmap"
+applicationId = "com.naruba200.musicman"
 ```
 
 (`com.example.*` is rejected by Play Console. Pick this once — it can
 never change after first upload.)
 
+**⚠️ Do not skip — MainActivity package (learned the hard way, 2026-10-20):**
+changing the ID is NOT enough. `MainActivity.kt` still declares the
+`flutter create` package, so the manifest's `.MainActivity` points at a
+class that isn't in the APK → `ClassNotFoundException`, app dies
+instantly on launch, and the build does NOT warn you. Fix: open
+`android/app/src/main/kotlin/com/example/music_map/MainActivity.kt` and
+change its first line to:
+
+```kotlin
+package com.naruba200.musicman
+```
+
+**⚠️ Do not skip — INTERNET permission (learned the hard way, 2026-10-20):**
+the `flutter create` MAIN manifest does NOT declare INTERNET (Flutter
+only adds it to the debug/profile manifests). A release build without it
+has NO network at all — and the failure disguises itself as DNS:
+`SocketException: Failed host lookup (errno = 7)`, because Android's
+resolver refuses lookups for apps lacking the permission. News, Last.fm,
+YouTube Music — everything dies at its first call, on phone AND
+emulator, while desktop/web builds work fine. Fix: in
+`android/app/src/main/AndroidManifest.xml`, inside `<manifest>` above
+`<application>`:
+
+```xml
+<uses-permission android:name="android.permission.INTERNET"/>
+```
+
+(Optionally move the file to `kotlin/com/naruba200/musicman/`.)
 ### Keystore (signing key — do once, back it up!)
 ```powershell
 keytool -genkey -v -keystore D:\keys\musicmap-release.jks `
@@ -104,7 +132,7 @@ xcopy launcher-icons\res android\app\src\main\res /E /Y
 5. `flutter test` — all green.
 6. Build: `flutter build appbundle --release`
    → `build/app/outputs/bundle/release/app-release.aab`
-7. Play Console → Music Map → **Testing → Closed testing** → new release →
+7. Play Console → Music Man → **Testing → Closed testing** → new release →
    upload the `.aab`, fill release notes, roll out to your testers list.
 8. Install the closed-testing build on your phone; run the manual QA
    matrix (§15 of the spec: airplane mode, 600-track playlist, 150-rec run,
@@ -112,7 +140,7 @@ xcopy launcher-icons\res android\app\src\main\res /E /Y
 9. Fix, bump, repeat → then **Production** track when clean.
 
 ## 2. First-time Play Console checklist
-- [ ] App created, package `com.naruba200.musicmap`
+- [ ] App created, package `com.naruba200.musicman`
 - [ ] Listing filled from `docs/play-listing.md` (title, short/long desc)
 - [ ] Graphics: 512 icon ✓ (repo), feature graphic 1024×500, ≥2 screenshots
 - [ ] Privacy policy URL set

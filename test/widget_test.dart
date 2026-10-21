@@ -8,8 +8,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:music_map/core/theme.dart';
-import 'package:music_map/core/time_ago.dart';
+import 'package:music_man/core/theme.dart';
+import 'package:music_man/core/time_ago.dart';
 
 void main() {
   testWidgets('app dark theme builds and timeAgo renders', (tester) async {
