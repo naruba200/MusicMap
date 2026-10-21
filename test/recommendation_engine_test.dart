@@ -119,6 +119,8 @@ void main() {
   group('blendWithInjections', () {
     ScoredTrack s(String artist, String title, double score) => ScoredTrack(
         track: _t(artist, title), score: score, reasons: const ['seed']);
+    ScoredTrack pool(String title, [String reason = 'Popular in rock']) =>
+        ScoredTrack(track: _t('Pool', title), score: 1, reasons: [reason]);
     TagTrack tt(String artist, String title, [int listeners = 100]) =>
         TagTrack(artist: artist, title: title, listeners: listeners);
     List<ScoredTrack> coreOf(int n) =>
@@ -126,10 +128,10 @@ void main() {
     int withReason(List<ScoredTrack> list, String reason) =>
         list.where((e) => e.reasons.contains(reason)).length;
 
-    test('no injections returns the core top-N untouched', () {
+    test('no pools returns the core top-N untouched', () {
       final out = RecommendationEngine.blendWithInjections(
         core: coreOf(5),
-        modifierByTag: const {},
+        modifierPool: const [],
         chartTracks: const [],
         total: 3,
         seedKeys: const {},
@@ -139,21 +141,16 @@ void main() {
       expect(out.map((e) => e.score), [50.0, 40.0, 30.0]);
     });
 
-    test('modifier tracks fill ~1/3 of the list with their tag reason', () {
+    test('tag pool fills ~1/2 of the list, reasons preserved', () {
       final out = RecommendationEngine.blendWithInjections(
         core: coreOf(6),
-        modifierByTag: {
-          'rock': [tt('M1', 'Mod One'), tt('M2', 'Mod Two'), tt('M3', 'Mod 3')]
-        },
+        modifierPool: [for (var i = 0; i < 6; i++) pool('Tag$i')],
         chartTracks: const [],
         total: 6,
         seedKeys: const {},
       );
       expect(out.length, 6);
-      expect(withReason(out, 'Popular in rock'), 2); // (6/3).round()
-      expect(
-          out.where((e) => e.reasons.contains('Popular in rock')).map((e) => e.track.title),
-          ['Mod One', 'Mod Two']);
+      expect(withReason(out, 'Popular in rock'), 3); // (6/2).round()
       expect(out.first.track.title, 'Song0'); // core opens
     });
 
@@ -161,19 +158,18 @@ void main() {
       final seedKey = RecommendationEngine.normalizeKey('Seed', 'Mine');
       final out = RecommendationEngine.blendWithInjections(
         core: coreOf(6),
-        modifierByTag: {
-          'rock': [
-            tt('Seed', 'Mine'), // in the seed playlist
-            tt('Core0', 'Song0'), // already in the core list
-            tt('New', 'Fresh Pick'),
-          ]
-        },
+        modifierPool: [
+          ScoredTrack(
+              track: _t('Seed', 'Mine'), score: 1, reasons: const ['x']),
+          ScoredTrack(
+              track: _t('Core0', 'Song0'), score: 1, reasons: const ['x']),
+          pool('Fresh Pick'),
+        ],
         chartTracks: const [],
         total: 6,
         seedKeys: {seedKey},
       );
-      final injected =
-          out.where((e) => e.reasons.contains('Popular in rock')).toList();
+      final injected = out.where((e) => e.track.artist == 'Pool').toList();
       expect(injected.length, 1);
       expect(injected.single.track.title, 'Fresh Pick');
       final keys = out
@@ -183,51 +179,94 @@ void main() {
       expect(keys.toSet().length, keys.length); // no duplicates anywhere
     });
 
-    test('fresh quota is ~1/5 and yields first when the 1/2 cap binds', () {
+    test('combined cap is 3/5 and fresh yields first', () {
       final out = RecommendationEngine.blendWithInjections(
-        core: coreOf(9),
-        modifierByTag: {
-          'rock': [for (var i = 0; i < 9; i++) tt('M$i', 'Mod$i')]
-        },
-        chartTracks: [for (var i = 0; i < 9; i++) tt('C$i', 'Chart$i')],
-        total: 9,
+        core: coreOf(30),
+        modifierPool: [for (var i = 0; i < 30; i++) pool('Tag$i')],
+        chartTracks: [for (var i = 0; i < 30; i++) tt('C$i', 'Chart$i')],
+        total: 30,
         seedKeys: const {},
       );
-      expect(out.length, 9);
-      expect(withReason(out, 'Popular in rock'), 3); // (9/3).round()
-      expect(withReason(out, 'Trending now'), 1); // 2, cut to cap 4 - 3
+      expect(out.length, 30);
+      expect(withReason(out, 'Popular in rock'), 15); // (30/2).round()
+      expect(withReason(out, 'Trending now'), 3); // 6, cut to cap 18 - 15
+      expect(out.where((e) => e.reasons.contains('seed')).length, 12);
     });
 
     test('pools backfill when the core runs short', () {
       final out = RecommendationEngine.blendWithInjections(
         core: coreOf(2),
-        modifierByTag: {
-          'rock': [for (var i = 0; i < 6; i++) tt('M$i', 'Mod$i')]
-        },
+        modifierPool: [for (var i = 0; i < 6; i++) pool('Tag$i')],
         chartTracks: const [],
         total: 6,
         seedKeys: const {},
       );
       expect(out.length, 6);
-      expect(withReason(out, 'Popular in rock'), 4); // 2 quota + 2 backfill
+      expect(withReason(out, 'Popular in rock'), 4); // 3 quota + 1 backfill
+    });
+  });
+
+  group('selectTagSeeds', () {
+    TagTrack tt(String artist, String title) =>
+        TagTrack(artist: artist, title: title, listeners: 100);
+
+    test('round-robin across tags by rank', () {
+      final sel = RecommendationEngine.selectTagSeeds({
+        'aaa': [tt('A', 'A1'), tt('A', 'A2'), tt('A', 'A3')],
+        'bbb': [tt('B', 'B1'), tt('B', 'B2'), tt('B', 'B3')],
+      });
+      expect(sel.seeds.map((t) => t.title),
+          ['A1', 'B1', 'A2', 'B2', 'A3', 'B3']);
+      expect(sel.tagOfKey[RecommendationEngine.normalizeKey('B', 'B2')],
+          'bbb');
     });
 
-    test('multiple tags contribute round-robin by rank', () {
-      final out = RecommendationEngine.blendWithInjections(
-        core: coreOf(6),
-        modifierByTag: {
-          'aaa': [tt('A1', 'First A'), tt('A2', 'Second A')],
-          'bbb': [tt('B1', 'First B'), tt('B2', 'Second B')],
+    test('per-tag and total caps apply', () {
+      final sel = RecommendationEngine.selectTagSeeds(
+        {
+          'aaa': [for (var i = 0; i < 10; i++) tt('A', 'A$i')],
+          'bbb': [for (var i = 0; i < 10; i++) tt('B', 'B$i')],
         },
-        chartTracks: const [],
-        total: 6,
-        seedKeys: const {},
+        maxSeeds: 5,
+        perTag: 2,
       );
-      final injected = out
-          .where((e) => e.reasons.single.startsWith('Popular in'))
-          .map((e) => e.track.title)
-          .toSet();
-      expect(injected, {'First A', 'First B'}); // rank 0 of each tag
+      expect(sel.seeds.length, 4); // 2 per tag, cap binds before maxSeeds
+    });
+
+    test('a track in two tags is seeded once, under the first tag', () {
+      final sel = RecommendationEngine.selectTagSeeds({
+        'aaa': [tt('X', 'Same')],
+        'bbb': [tt('X', 'Same'), tt('B', 'B1')],
+      });
+      expect(sel.seeds.map((t) => t.title), ['Same', 'B1']);
+      expect(sel.tagOfKey[RecommendationEngine.normalizeKey('X', 'Same')],
+          'aaa');
+    });
+  });
+
+  group('buildTagPool', () {
+    test('tag seeds head the pool, similars follow scored', () {
+      final seeds = [_t('S1', 'Seed One'), _t('S2', 'Seed Two')];
+      final pool = RecommendationEngine.buildTagPool(
+        tagSeeds: seeds,
+        similarBySeed: const {
+          0: [
+            SimilarTrack(artist: 'X', title: 'Sim X', match: 0.9),
+            SimilarTrack(artist: 'Y', title: 'Sim Y', match: 0.5),
+          ],
+          1: [SimilarTrack(artist: 'X', title: 'Sim X', match: 0.8)],
+        },
+        tagOfKey: {
+          RecommendationEngine.normalizeKey('S1', 'Seed One'): 'rock',
+          RecommendationEngine.normalizeKey('S2', 'Seed Two'): 'rock',
+        },
+      );
+      expect(pool.map((e) => e.track.title),
+          ['Seed One', 'Seed Two', 'Sim X', 'Sim Y']);
+      expect(pool[0].reasons, ['Popular in rock']);
+      // Sim X: rank 0 under both seeds -> 1/(1+0) + 1/(1+0) = 2.0
+      expect(pool[2].score, closeTo(2.0, 1e-9));
+      expect(pool[0].score, greaterThan(pool[2].score)); // head sits above
     });
   });
 

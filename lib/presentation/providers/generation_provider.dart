@@ -233,14 +233,36 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         similarBySeed: similarBySeed,
       );
 
-      // 2. Discovery modifiers (FR-07b): fetch each tag's top tracks.
-      // They are injected by quota in step 4 (amended 2026-10-20, §28).
+      // 2. Discovery modifiers (FR-07b, §30 seed mode): fetch each tag's
+      // top tracks, take tag seeds round-robin, expand them via
+      // track.getSimilar and score them into a tag pool — the picked
+      // tags act as seeds (Chosic-style), not as a post-hoc blend.
       final tags = _tagsFor(settings);
-      final modifierByTag = <String, List<TagTrack>>{};
-      for (var i = 0; i < tags.length; i++) {
-        if (_cancelled) return _abort();
-        _setProgress('Applying discovery filters', i, tags.length);
-        modifierByTag[tags[i]] = await _lfm.getTagTopTracks(tags[i]);
+      var modifierPool = const <ScoredTrack>[];
+      if (tags.isNotEmpty) {
+        final topByTag = <String, List<TagTrack>>{};
+        for (var i = 0; i < tags.length; i++) {
+          if (_cancelled) return _abort();
+          _setProgress('Reading your tags', i, tags.length);
+          topByTag[tags[i]] = await _lfm.getTagTopTracks(tags[i]);
+        }
+        final tagSelection = RecommendationEngine.selectTagSeeds(topByTag);
+        final similarByTagSeed = <int, List<SimilarTrack>>{};
+        for (var i = 0; i < tagSelection.seeds.length; i++) {
+          if (_cancelled) return _abort();
+          _setProgress('Expanding your tags', i, tagSelection.seeds.length);
+          final seed = tagSelection.seeds[i];
+          final sims = await _lfm.getSimilarTracks(
+            RecommendationEngine.primaryArtist(seed.artist),
+            seed.title,
+          );
+          if (sims.isNotEmpty) similarByTagSeed[i] = sims;
+        }
+        modifierPool = RecommendationEngine.buildTagPool(
+          tagSeeds: tagSelection.seeds,
+          similarBySeed: similarByTagSeed,
+          tagOfKey: tagSelection.tagOfKey,
+        );
       }
 
       // 3. Fresh finds (FR-07c): the chart list, also injected by quota.
@@ -258,7 +280,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       };
       final songs = RecommendationEngine.blendWithInjections(
         core: scored,
-        modifierByTag: modifierByTag,
+        modifierPool: modifierPool,
         chartTracks: chartTracks,
         total: settings.songCount,
         seedKeys: seedKeys,

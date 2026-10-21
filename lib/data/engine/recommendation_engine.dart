@@ -176,29 +176,90 @@ class RecommendationEngine {
     return result;
   }
 
-  /// Slot-based injection (FR-07b/07c as amended 2026-10-20, §28):
-  /// merge [core] with tracks injected from the discovery modifiers and
-  /// the Fresh-finds chart, by quota instead of by score — seed scores
-  /// (similarity ranks) and tag listener counts are incommensurable,
-  /// and the old overlap-boost changed nothing when the overlap was
-  /// empty, which was nearly always.
+  /// Tag-seed selection (FR-07b seed mode, §30): round-robin by rank
+  /// across tags so every selected tag contributes seeds; at most
+  /// [maxSeeds] total and [perTag] per tag. Returns the seed tracks in
+  /// interleave order plus a normalizeKey → tag map for reason labels.
+  static ({List<Track> seeds, Map<String, String> tagOfKey}) selectTagSeeds(
+    Map<String, List<TagTrack>> topByTag, {
+    int maxSeeds = 12,
+    int perTag = 6,
+  }) {
+    final seeds = <Track>[];
+    final tagOfKey = <String, String>{};
+    if (topByTag.isEmpty) return (seeds: seeds, tagOfKey: tagOfKey);
+    final tags = topByTag.keys.toList();
+    final takenPerTag = {for (final t in tags) t: 0};
+    final maxLen =
+        topByTag.values.fold(0, (m, l) => l.length > m ? l.length : m);
+    for (var rank = 0; rank < maxLen && seeds.length < maxSeeds; rank++) {
+      for (final tag in tags) {
+        if (seeds.length >= maxSeeds) break;
+        if (takenPerTag[tag]! >= perTag) continue;
+        final list = topByTag[tag]!;
+        if (rank >= list.length) continue;
+        final t = list[rank];
+        if (t.artist.trim().isEmpty || t.title.trim().isEmpty) continue;
+        final key = normalizeKey(t.artist, t.title);
+        if (tagOfKey.containsKey(key)) continue;
+        tagOfKey[key] = tag;
+        takenPerTag[tag] = takenPerTag[tag]! + 1;
+        seeds.add(Track(title: t.title, artist: t.artist));
+      }
+    }
+    return (seeds: seeds, tagOfKey: tagOfKey);
+  }
+
+  /// Build the tag pool (§30): the tag seed tracks themselves head the
+  /// pool (reason "Popular in {tag}"), followed by their similar tracks
+  /// scored with the same rule as playlist seeds ([scoreCandidates],
+  /// which already excludes the seeds themselves from the similars).
+  /// [similarBySeed] is keyed by the seed's index in [tagSeeds].
+  static List<ScoredTrack> buildTagPool({
+    required List<Track> tagSeeds,
+    required Map<int, List<SimilarTrack>> similarBySeed,
+    required Map<String, String> tagOfKey,
+  }) {
+    final similars =
+        scoreCandidates(seeds: tagSeeds, similarBySeed: similarBySeed);
+    final headScore = similars.isEmpty ? 1.0 : similars.first.score;
+    final head = <ScoredTrack>[];
+    for (var i = 0; i < tagSeeds.length; i++) {
+      final seed = tagSeeds[i];
+      final tag = tagOfKey[normalizeKey(seed.artist, seed.title)];
+      head.add(ScoredTrack(
+        track: seed,
+        // Head of the pool, in seed order, just above the similars.
+        score: headScore + (tagSeeds.length - i) * 0.01,
+        reasons: [if (tag != null) 'Popular in $tag'],
+      ));
+    }
+    return [...head, ...similars];
+  }
+
+  /// Merge [core] with the tag pool and the Fresh-finds chart, by quota
+  /// instead of by score — seed scores (similarity ranks) and tag
+  /// listener counts are incommensurable, and the original
+  /// overlap-boost changed nothing when the overlap was empty, which
+  /// was nearly always.
   ///
-  /// - Modifier pool: round-robin across [modifierByTag] in map order,
-  ///   each tag's rank order preserved; quota ≈ total/3.
+  /// - Modifier pool: the pre-scored tag pool from [buildTagPool]
+  ///   (§30 seed mode); quota ≈ total/2.
   /// - Fresh pool: [chartTracks] in rank order; quota ≈ total/5.
-  /// - Combined injected quota is capped at total/2; fresh yields
-  ///   first when the cap binds.
-  /// - Injected tracks never repeat the seed playlist ([seedKeys]),
-  ///   the core list, or each other. If a pool runs dry the others
+  /// - Combined non-core quota capped at 3/5 of the list; fresh yields
+  ///   first when the cap binds; core always keeps the rest.
+  /// - Pool tracks never repeat the seed playlist ([seedKeys]), the
+  ///   core list, or each other. If a pool runs dry the others
   ///   backfill; core always keeps the remaining slots.
   /// - Sources interleave by quota progress (taken/desired, core wins
   ///   ties) so injections spread evenly through the list.
-  /// - An injected track's score sits just under the previously
+  /// - A pooled track's emitted score sits just under the previously
   ///   emitted track's, so album derivation (FR-11) ranks it by its
-  ///   list position; reasons are "Popular in {tag}" / "Trending now".
+  ///   list position; its reasons travel with it ("Popular in {tag}",
+  ///   seed titles, "Trending now").
   static List<ScoredTrack> blendWithInjections({
     required List<ScoredTrack> core,
-    required Map<String, List<TagTrack>> modifierByTag,
+    required List<ScoredTrack> modifierPool,
     required List<TagTrack> chartTracks,
     required int total,
     required Set<String> seedKeys,
@@ -210,23 +271,15 @@ class RecommendationEngine {
     final blocked = {...seedKeys, ...coreKeys};
     final seen = <String>{};
 
-    // Modifier pool: round-robin by rank across tags.
-    final modPool = <(TagTrack, String)>[]; // (track, tag)
-    if (modifierByTag.isNotEmpty) {
-      final tags = modifierByTag.keys.toList();
-      final maxLen = modifierByTag.values
-          .fold(0, (m, l) => l.length > m ? l.length : m);
-      for (var rank = 0; rank < maxLen; rank++) {
-        for (final tag in tags) {
-          final list = modifierByTag[tag]!;
-          if (rank >= list.length) continue;
-          final t = list[rank];
-          if (t.artist.trim().isEmpty || t.title.trim().isEmpty) continue;
-          final key = normalizeKey(t.artist, t.title);
-          if (blocked.contains(key) || !seen.add(key)) continue;
-          modPool.add((t, tag));
-        }
-      }
+    // Modifier pool: filtered against the seed playlist, the core and
+    // itself, rank order preserved.
+    final modPool = <ScoredTrack>[];
+    for (final item in modifierPool) {
+      final t = item.track;
+      if (t.artist.trim().isEmpty || t.title.trim().isEmpty) continue;
+      final key = normalizeKey(t.artist, t.title);
+      if (blocked.contains(key) || !seen.add(key)) continue;
+      modPool.add(item);
     }
 
     // Fresh pool: chart order.
@@ -238,10 +291,10 @@ class RecommendationEngine {
       freshPool.add(t);
     }
 
-    // Quotas (spec §28): modifiers ~1/3, fresh ~1/5, combined ≤ 1/2.
-    var modQuota = modifierByTag.isEmpty ? 0 : (total / 3).round();
+    // Quotas (spec §30): tag pool ~1/2, fresh ~1/5, combined ≤ 3/5.
+    var modQuota = modifierPool.isEmpty ? 0 : (total / 2).round();
     var freshQuota = chartTracks.isEmpty ? 0 : (total / 5).round();
-    final cap = total ~/ 2;
+    final cap = (total * 3) ~/ 5;
     if (modQuota + freshQuota > cap) {
       freshQuota = freshQuota > cap - modQuota ? cap - modQuota : freshQuota;
       if (freshQuota < 0) freshQuota = 0;
@@ -312,12 +365,12 @@ class RecommendationEngine {
         prevScore = c.score;
         result.add(c);
       } else if (pick == 1) {
-        final (t, tag) = modPool[mi++];
+        final item = modPool[mi++];
         prevScore = prevScore * 0.99;
         result.add(ScoredTrack(
-          track: Track(title: t.title, artist: t.artist),
+          track: item.track,
           score: prevScore,
-          reasons: ['Popular in $tag'],
+          reasons: item.reasons,
         ));
       } else {
         final t = freshPool[fi++];
@@ -402,7 +455,7 @@ class RecommendationEngine {
     if (chartTracks.isEmpty) return base.take(count).toList();
     return blendWithInjections(
       core: base,
-      modifierByTag: const {},
+      modifierPool: const [],
       chartTracks: chartTracks,
       total: count,
       seedKeys: const {},
