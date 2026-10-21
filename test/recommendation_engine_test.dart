@@ -332,4 +332,184 @@ void main() {
       expect(keys.toSet().length, keys.length); // the dup chart track stayed out
     });
   });
+
+  group('topN', () {
+    ScoredTrack s(String title, double score) => ScoredTrack(
+        track: _t('A', title), score: score, reasons: const []);
+
+    test('takes the first N in order', () {
+      final out = RecommendationEngine.topN([s('a', 3), s('b', 2), s('c', 1)], 2);
+      expect(out.map((e) => e.track.title), ['a', 'b']);
+    });
+
+    test('n beyond the list returns everything', () {
+      expect(RecommendationEngine.topN([s('a', 1)], 10).length, 1);
+    });
+  });
+
+  group('engine model JSON', () {
+    test('ScoredTrack round-trips', () {
+      final st = ScoredTrack(
+        track: _t('Artist', 'Title', album: 'Alb'),
+        score: 1.25,
+        reasons: const ['seed'],
+      );
+      final back = ScoredTrack.fromJson(st.toJson());
+      expect(back.track.title, 'Title');
+      expect(back.track.album, 'Alb');
+      expect(back.score, 1.25);
+      expect(back.reasons, ['seed']);
+    });
+
+    test('AlbumRec round-trips with its songs', () {
+      final rec = AlbumRec(
+        name: 'Alb',
+        artist: 'Artist',
+        songCount: 1,
+        bestScore: 2.5,
+        songs: [
+          ScoredTrack(track: _t('Artist', 'T'), score: 2.5, reasons: const [])
+        ],
+      );
+      final back = AlbumRec.fromJson(rec.toJson());
+      expect(back.name, 'Alb');
+      expect(back.songCount, 1);
+      expect(back.songs.single.track.title, 'T');
+    });
+  });
+
+  group('surpriseAlbums', () {
+    TagAlbum ta(String artist, String name) =>
+        TagAlbum(artist: artist, name: name);
+
+    test('merges tags in order, dedupes case-insensitively, caps at count',
+        () {
+      final out = RecommendationEngine.surpriseAlbums(
+        topByTag: {
+          'rock': [ta('A', 'One'), ta('B', 'Two')],
+          'pop': [ta('a', 'ONE'), ta('C', 'Three')],
+        },
+        count: 3,
+      );
+      expect(out.map((e) => e.name), ['One', 'Two', 'Three']);
+      expect(out.first.songCount, 0);
+      expect(out.first.songs, isEmpty);
+    });
+
+    test('skips blank artist/name entries', () {
+      final out = RecommendationEngine.surpriseAlbums(
+        topByTag: {
+          'x': [ta('', 'NoArtist'), ta('A', ''), ta('A', 'Real')]
+        },
+        count: 10,
+      );
+      expect(out.map((e) => e.name), ['Real']);
+    });
+  });
+
+  group('pipeline — tags change the result', () {
+    // Replicates generateFromPlaylist's pure steps with fixed fixtures:
+    // selectSeeds -> scoreCandidates -> (optional tag pool) -> blend.
+    const total = 20;
+
+    List<Track> playlist() =>
+        [for (var i = 0; i < 15; i++) _t('PA$i', 'P$i')];
+
+    Map<int, List<SimilarTrack>> coreSimilars(int seedCount) => {
+          for (var i = 0; i < seedCount; i++)
+            i: [
+              for (var j = 0; j < 3; j++)
+                SimilarTrack(
+                    artist: 'CA${i}_$j',
+                    title: 'CoreCand${i}_$j',
+                    match: 0.9 - j * 0.1)
+            ]
+        };
+
+    List<ScoredTrack> runPipeline(Map<String, List<TagTrack>> topByTag) {
+      final tracks = playlist();
+      final selection = RecommendationEngine.selectSeeds(tracks);
+      final scored = RecommendationEngine.scoreCandidates(
+        seeds: selection.seeds,
+        similarBySeed: coreSimilars(selection.seeds.length),
+      );
+      var pool = const <ScoredTrack>[];
+      if (topByTag.isNotEmpty) {
+        final tagSel = RecommendationEngine.selectTagSeeds(topByTag);
+        pool = RecommendationEngine.buildTagPool(
+          tagSeeds: tagSel.seeds,
+          similarBySeed: {
+            for (var i = 0; i < tagSel.seeds.length; i++)
+              i: [
+                for (var j = 0; j < 3; j++)
+                  SimilarTrack(
+                      artist: 'TS${i}_$j',
+                      title: 'TagSim${i}_$j',
+                      match: 0.9)
+              ]
+          },
+          tagOfKey: tagSel.tagOfKey,
+        );
+      }
+      return RecommendationEngine.blendWithInjections(
+        core: scored,
+        modifierPool: pool,
+        chartTracks: const [],
+        total: total,
+        seedKeys: {
+          for (final t in tracks)
+            RecommendationEngine.normalizeKey(t.artist, t.title)
+        },
+      );
+    }
+
+    Map<String, List<TagTrack>> tagFixture(String tag, String prefix) => {
+          tag: [
+            for (var k = 0; k < 8; k++)
+              TagTrack(
+                  artist: '$prefix A$k',
+                  title: '$prefix$k',
+                  listeners: 1000 - k)
+          ]
+        };
+
+    List<String> titles(List<ScoredTrack> l) =>
+        [for (final e in l) e.track.title];
+
+    test('choosing a tag gives a different result from choosing nothing',
+        () {
+      final noTags = runPipeline(const {});
+      final withMetal = runPipeline(tagFixture('metal', 'Metal'));
+      expect(noTags.length, total);
+      expect(withMetal.length, total);
+      expect(titles(withMetal), isNot(titles(noTags)));
+      // No tag-pool material leaks into the no-tag run.
+      expect(
+          noTags.where((e) => e.track.title.startsWith('Metal')), isEmpty);
+      expect(
+          noTags.where((e) => e.track.title.startsWith('TagSim')), isEmpty);
+    });
+
+    test('the tag pool fills half the list, tag tracks head it', () {
+      final withMetal = runPipeline(tagFixture('metal', 'Metal'));
+      final poolItems = withMetal
+          .where((e) =>
+              e.track.title.startsWith('Metal') ||
+              e.track.title.startsWith('TagSim'))
+          .length;
+      expect(poolItems, total ~/ 2); // ~1/2 quota (§30)
+      expect(
+          withMetal.where((e) => e.reasons.contains('Popular in metal')),
+          hasLength(6)); // all 6 tag seeds are taken, in pool order
+    });
+
+    test('different tags give different results from each other', () {
+      final withMetal = runPipeline(tagFixture('metal', 'Metal'));
+      final withChill = runPipeline(tagFixture('chill', 'Chill'));
+      expect(titles(withChill), isNot(titles(withMetal)));
+      expect(
+          withChill.where((e) => e.reasons.contains('Popular in chill')),
+          hasLength(6));
+    });
+  });
 }

@@ -120,6 +120,156 @@ void main() {
       expect(albums.single.artist, 'YOASOBI');
     });
   });
+
+  group('TagAlbum.fromJson', () {
+    test('parses string artist', () {
+      final a = TagAlbum.fromJson({'name': 'Alb', 'artist': 'The Band'});
+      expect(a.name, 'Alb');
+      expect(a.artist, 'The Band');
+    });
+
+    test('parses map artist', () {
+      final a = TagAlbum.fromJson({
+        'name': 'Alb',
+        'artist': {'name': 'The Band'}
+      });
+      expect(a.artist, 'The Band');
+    });
+  });
+
+  group('client methods (canned envelopes)', () {
+    LastFmClient clientFor(Map<String, dynamic> Function(String) respond,
+        {void Function(String)? onMethod}) {
+      final dio = Dio();
+      dio.httpClientAdapter = _CannedAdapter((method) {
+        onMethod?.call(method);
+        return respond(method);
+      });
+      return LastFmClient(dio: dio, apiKey: 'test-key');
+    }
+
+    test('getSimilarTracks parses the similartracks envelope', () async {
+      String? method;
+      final client = clientFor(
+        (_) => {
+          'similartracks': {
+            'track': [
+              {
+                'name': 'Sim Song',
+                'match': '0.77',
+                'artist': {'name': 'Sim Artist'}
+              }
+            ]
+          }
+        },
+        onMethod: (m) => method = m,
+      );
+      final out = await client.getSimilarTracks('A', 'T');
+      expect(method, 'track.getSimilar');
+      expect(out.single.title, 'Sim Song');
+      expect(out.single.artist, 'Sim Artist');
+      expect(out.single.match, closeTo(0.77, 0.001));
+    });
+
+    test('getTagTopTracks parses the tracks envelope', () async {
+      String? method;
+      final client = clientFor(
+        (_) => {
+          'tracks': {
+            'track': [
+              {
+                'name': 'Tag Hit',
+                'listeners': '555',
+                'artist': {'name': 'Tag Artist'}
+              }
+            ]
+          }
+        },
+        onMethod: (m) => method = m,
+      );
+      final out = await client.getTagTopTracks('rock');
+      expect(method, 'tag.getTopTracks');
+      expect(out.single.title, 'Tag Hit');
+      expect(out.single.listeners, 555);
+    });
+
+    test('getTagTopAlbums parses the albums envelope', () async {
+      String? method;
+      final client = clientFor(
+        (_) => {
+          'albums': {
+            'album': [
+              {'name': 'Tag Album', 'artist': 'Tag Artist'}
+            ]
+          }
+        },
+        onMethod: (m) => method = m,
+      );
+      final out = await client.getTagTopAlbums('rock');
+      expect(method, 'tag.getTopAlbums');
+      expect(out.single.name, 'Tag Album');
+      expect(out.single.artist, 'Tag Artist');
+    });
+
+    test('getChartTopTracks parses the tracks envelope', () async {
+      String? method;
+      final client = clientFor(
+        (_) => {
+          'tracks': {
+            'track': [
+              {
+                'name': 'Chart Hit',
+                'listeners': '999',
+                'artist': {'name': 'Chart Artist'}
+              }
+            ]
+          }
+        },
+        onMethod: (m) => method = m,
+      );
+      final out = await client.getChartTopTracks();
+      expect(method, 'chart.getTopTracks');
+      expect(out.single.title, 'Chart Hit');
+    });
+
+    test('getSimilarTags trims names and drops empties', () async {
+      final client = clientFor((_) => {
+            'similartags': {
+              'tag': [
+                {'name': 'rock'},
+                {'name': ' metal '},
+                {'name': ''},
+                {'name': 'indie'},
+              ]
+            }
+          });
+      expect(await client.getSimilarTags('rock'), ['rock', 'metal', 'indie']);
+    });
+
+    test('getTrackInfo returns album info', () async {
+      final client = clientFor((_) => {
+            'track': {
+              'album': {
+                'title': 'Alb',
+                'artist': 'Art',
+                'image': [
+                  {'#text': 'big.jpg', 'size': 'extralarge'}
+                ],
+              }
+            }
+          });
+      final info = await client.getTrackInfo('Art', 'Song');
+      expect(info.album, 'Alb');
+      expect(info.imageUrl, 'big.jpg');
+    });
+
+    test('an error envelope throws LastFmException', () async {
+      final client =
+          clientFor((_) => {'error': 6, 'message': 'Track not found'});
+      await expectLater(client.getSimilarTracks('A', 'Nope'),
+          throwsA(isA<LastFmException>()));
+    });
+  });
 }
 
 /// Answers with the payload [respond] builds for the requested
