@@ -25,12 +25,12 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- 1. Spotify OAuth redirect: musicmap://callback?code=... -->
+            <!-- 1. Spotify OAuth redirect: musicman://callback?code=... -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="musicmap" android:host="callback" />
+                <data android:scheme="musicman" android:host="callback" />
             </intent-filter>
 
             <!-- 2. Receive shared playlist links (text/plain) from other apps -->

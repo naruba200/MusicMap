@@ -3,8 +3,8 @@
 ## 0. One-time setup (do once)
 
 ### applicationId
-Your `android/` folder is local-only (not in the repo). In
-`android/app/build.gradle`, set:
+Your `android/` folder is in the repo. In
+`android/app/build.gradle.kts`, it is set to:
 
 ```gradle
 namespace = "com.naruba200.musicman"
@@ -19,9 +19,9 @@ never change after first upload.)
 changing the ID is NOT enough. `MainActivity.kt` still declares the
 `flutter create` package, so the manifest's `.MainActivity` points at a
 class that isn't in the APK → `ClassNotFoundException`, app dies
-instantly on launch, and the build does NOT warn you. Fix: open
-`android/app/src/main/kotlin/com/example/music_map/MainActivity.kt` and
-change its first line to:
+instantly on launch, and the build does NOT warn you. Fixed 2026-10-24: the file now lives at
+`android/app/src/main/kotlin/com/naruba200/musicman/MainActivity.kt` with
+its first line:
 
 ```kotlin
 package com.naruba200.musicman
@@ -42,24 +42,34 @@ emulator, while desktop/web builds work fine. Fix: in
 <uses-permission android:name="android.permission.INTERNET"/>
 ```
 
-(Optionally move the file to `kotlin/com/naruba200/musicman/`.)
+(Done 2026-10-24.)
 ### Keystore (signing key — do once, back it up!)
 ```powershell
-keytool -genkey -v -keystore D:\keys\musicmap-release.jks `
-  -keyalg RSA -keysize 2048 -validity 10000 -alias musicmap
+keytool -genkey -v -keystore D:\keys\musicman-release.jks `
+  -keyalg RSA -keysize 2048 -validity 10000 -alias musicman
 ```
-Back up `musicmap-release.jks` + passwords somewhere safe (USB drive /
+Back up `musicman-release.jks` + passwords somewhere safe (USB drive /
 password manager). **Losing it = you can never update the app.**
+
+**Pending (PC off, 2026-10-24):** the keystore actually on your PC is still
+`musicmap-release.jks` / alias `musicmap`. When the PC is on, do NOT create
+a new key — rename the alias in place, then rename the file:
+```powershell
+keytool -changealias -keystore D:\keys\musicmap-release.jks -alias musicmap -destalias musicman
+# then rename D:\keys\musicmap-release.jks to D:\keys\musicman-release.jks
+# and update android/key.properties to match
+```
+Until then a signed build from the PC will still use the old key.properties values.
 
 ### key.properties (NOT in git)
 Create `android/key.properties` (never commit this file):
 ```properties
 storePassword=YOUR_STORE_PASSWORD
 keyPassword=YOUR_KEY_PASSWORD
-keyAlias=musicmap
-storeFile=D:/keys/musicmap-release.jks
+keyAlias=musicman
+storeFile=D:/keys/musicman-release.jks
 ```
-Wire it in `android/app/build.gradle` (`signingConfigs.release` →
+Wire it in `android/app/build.gradle.kts` (`signingConfigs.release` →
 `buildTypes.release.signingConfig`). **Note:** newer Flutter templates use
 Kotlin DSL (`build.gradle.kts`), not Groovy (`build.gradle`) — use the
 matching snippet below.
