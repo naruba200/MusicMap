@@ -13,6 +13,7 @@ import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
 import '../widgets/favorite_button.dart';
 import '../widgets/outbound_sheet.dart';
+import '../widgets/youtube_export_sheet.dart';
 import 'album_detail_screen.dart';
 
 /// Session cache for lazily fetched album art (FR-11): key → image URL
@@ -36,6 +37,15 @@ class ResultsScreen extends ConsumerWidget {
       child: Scaffold(
         appBar: AppBar(
           title: Text(result.seedName),
+          actions: [
+            if (result.songs.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.playlist_add_outlined),
+                tooltip: 'Export to YouTube',
+                onPressed: () => showYouTubeExportSheet(
+                    context, ref, [for (final s in result.songs) s.track]),
+              ),
+          ],
           bottom: const TabBar(tabs: [
             Tab(text: 'Songs'),
             Tab(text: 'Albums'),

@@ -10,6 +10,7 @@ import '../../data/models/music_models.dart';
 import '../providers/daily_picks_provider.dart';
 import '../providers/providers.dart';
 import '../widgets/outbound_sheet.dart';
+import '../widgets/youtube_export_sheet.dart';
 import 'album_detail_screen.dart';
 
 class FavoritesScreen extends ConsumerStatefulWidget {
@@ -245,7 +246,21 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
       return _emptyState(Icons.favorite_outline,
           'No favorite songs yet.\nTap the heart on any recommendation.');
     }
-    return ListView.builder(
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonalIcon(
+              onPressed: () => showYouTubeExportSheet(context, ref, tracks),
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('Export to YouTube'),
+            ),
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
       itemCount: tracks.length,
       itemBuilder: (_, i) {
         final t = tracks[i];
@@ -305,6 +320,9 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
           ),
         );
       },
+          ),
+        ),
+      ],
     );
   }
 
