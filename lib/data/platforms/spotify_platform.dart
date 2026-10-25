@@ -17,6 +17,7 @@ import '../../core/constants.dart';
 import '../auth/token_store.dart';
 import '../models/music_models.dart';
 import 'music_platform.dart';
+import 'open_in_app.dart';
 import 'platform_oauth.dart';
 
 class SpotifyPlatform extends MusicPlatform {
@@ -283,15 +284,14 @@ class SpotifyPlatform extends MusicPlatform {
   @override
   Future<void> openTrack(Track track) async {
     final query = Uri.encodeComponent('${track.artist} ${track.title}');
-    await launchUrl(
-        Uri.parse('https://open.spotify.com/search/$query'),
-        mode: LaunchMode.externalApplication);
+    await openLinkInAppFirst(
+        Uri.parse('https://open.spotify.com/search/$query'));
   }
 
   @override
   Future<void> openPlaylist(String playlistId) async {
-    await launchUrl(Uri.parse('https://open.spotify.com/playlist/$playlistId'),
-        mode: LaunchMode.externalApplication);
+    await openLinkInAppFirst(
+        Uri.parse('https://open.spotify.com/playlist/$playlistId'));
   }
 
   // -- PKCE helpers --------------------------------------------------------

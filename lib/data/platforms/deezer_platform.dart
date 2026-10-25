@@ -2,11 +2,11 @@
 // Docs: https://developers.deezer.com/api
 
 import 'package:dio/dio.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/constants.dart';
 import '../models/music_models.dart';
 import 'music_platform.dart';
+import 'open_in_app.dart';
 
 class DeezerPlatform extends MusicPlatform {
   final Dio _dio;
@@ -99,13 +99,13 @@ class DeezerPlatform extends MusicPlatform {
   @override
   Future<void> openTrack(Track track) async {
     final query = Uri.encodeComponent('${track.artist} ${track.title}');
-    await launchUrl(Uri.parse('https://www.deezer.com/search/$query'),
-        mode: LaunchMode.externalApplication);
+    await openLinkInAppFirst(
+        Uri.parse('https://www.deezer.com/search/$query'));
   }
 
   @override
   Future<void> openPlaylist(String playlistId) async {
-    await launchUrl(Uri.parse('https://www.deezer.com/playlist/$playlistId'),
-        mode: LaunchMode.externalApplication);
+    await openLinkInAppFirst(
+        Uri.parse('https://www.deezer.com/playlist/$playlistId'));
   }
 }

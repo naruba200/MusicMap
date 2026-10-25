@@ -2,9 +2,9 @@
 // each platform is reached via its search URL.
 
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/models/music_models.dart';
+import '../../data/platforms/open_in_app.dart';
 
 String _q(String s) => Uri.encodeComponent(s);
 
@@ -19,7 +19,7 @@ String youTubeMusicSearchUrl(String query) =>
 
 Future<void> _open(String url, BuildContext context) async {
   final uri = Uri.parse(url);
-  if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+  if (!await openLinkInAppFirst(uri)) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not open link.')),

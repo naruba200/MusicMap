@@ -6,11 +6,11 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/export/youtube_export.dart';
 import '../../data/export/youtube_video_cache.dart';
 import '../../data/models/music_models.dart';
+import '../../data/platforms/open_in_app.dart';
 import '../providers/providers.dart';
 
 /// Resolves [tracks] and opens the export sheet. Songs only (FR-31).
@@ -144,7 +144,7 @@ class _ExportResultSheet extends StatelessWidget {
 
   Future<void> _open(BuildContext context, String url) async {
     final uri = Uri.parse(url);
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+    if (!await openLinkInAppFirst(uri)) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not open link.')),

@@ -3,11 +3,11 @@
 // soundCloudClientId in lib/core/constants.dart.
 
 import 'package:dio/dio.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/constants.dart';
 import '../models/music_models.dart';
 import 'music_platform.dart';
+import 'open_in_app.dart';
 
 class SoundCloudPlatform extends MusicPlatform {
   final Dio _dio;
@@ -130,8 +130,8 @@ class SoundCloudPlatform extends MusicPlatform {
   @override
   Future<void> openTrack(Track track) async {
     final query = Uri.encodeComponent('${track.artist} ${track.title}');
-    await launchUrl(Uri.parse('https://soundcloud.com/search?q=$query'),
-        mode: LaunchMode.externalApplication);
+    await openLinkInAppFirst(
+        Uri.parse('https://soundcloud.com/search?q=$query'));
   }
 
   @override
@@ -139,6 +139,6 @@ class SoundCloudPlatform extends MusicPlatform {
     final url = playlistId.startsWith('http')
         ? playlistId
         : 'https://soundcloud.com/$playlistId';
-    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    await openLinkInAppFirst(Uri.parse(url));
   }
 }
