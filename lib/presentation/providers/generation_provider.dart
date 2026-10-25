@@ -2,6 +2,8 @@
 // scoring, Surprise-me mode, and live related genres (spec FR-04e…FR-11,
 // FR-19). The engine itself stays pure Dart in data/engine.
 
+import 'dart:math';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -354,8 +356,9 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
     state = const GenerationState(running: true);
     try {
       _requireKey();
+      final random = Random();
       var tags = _tagsFor(settings);
-      if (tags.isEmpty) tags = _rotatingDefaultTags();
+      if (tags.isEmpty) tags = _randomDefaultTags(random);
 
       // Songs: tag top tracks merged + ranked (FR-19).
       final topByTag = <String, List<TagTrack>>{};
@@ -374,6 +377,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         topByTag: topByTag,
         chartTracks: chartTracks,
         count: settings.songCount,
+        random: random,
       );
 
       // Albums: tag top albums (FR-19).
@@ -386,6 +390,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       final albums = RecommendationEngine.surpriseAlbums(
         topByTag: albumsByTag,
         count: settings.albumCount,
+        random: random,
       );
 
       await _finishRun(
@@ -414,11 +419,14 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         for (final g in settings.genres) tagForLabel(g),
       ];
 
-  /// 3 rotating tags when the user picked none (FR-19).
-  List<String> _rotatingDefaultTags() {
+  /// 3 random distinct tags when the user picked none (FR-19).
+  /// Random per run, so Surprise differs each time — the old day-based
+  /// rotation gave the same 3 tags all day, which was a second source
+  /// of identical Surprise results.
+  List<String> _randomDefaultTags(Random random) {
     const pool = ['pop', 'rock', 'electronic', 'hip-hop', 'j-pop', 'anime'];
-    final start = DateTime.now().day % pool.length;
-    return [for (var i = 0; i < 3; i++) pool[(start + i) % pool.length]];
+    final shuffled = [...pool]..shuffle(random);
+    return shuffled.take(3).toList();
   }
 
   /// Persist a completed run to history (FR-13), then publish the result.

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:music_man/data/engine/recommendation_engine.dart';
 import 'package:music_man/data/lastfm/lastfm_client.dart';
@@ -404,6 +406,116 @@ void main() {
         count: 10,
       );
       expect(out.map((e) => e.name), ['Real']);
+    });
+  });
+
+  group('surprise with Random', () {
+    Map<String, List<TagTrack>> tagTracks(int n) => {
+          'pop': [
+            for (var i = 0; i < n; i++)
+              TagTrack(artist: 'A$i', title: 'T$i', listeners: 1000 - i),
+          ],
+        };
+
+    test('same seed gives the same result', () {
+      final a = RecommendationEngine.surpriseSongs(
+          topByTag: tagTracks(30), count: 5, random: Random(42));
+      final b = RecommendationEngine.surpriseSongs(
+          topByTag: tagTracks(30), count: 5, random: Random(42));
+      expect(a.map((e) => e.track.title), b.map((e) => e.track.title));
+    });
+
+    test('different seeds differ in set/order, sampled from the top pool',
+        () {
+      final deterministic = RecommendationEngine.surpriseSongs(
+          topByTag: tagTracks(30), count: 5);
+      expect(deterministic.map((e) => e.track.title),
+          ['T0', 'T1', 'T2', 'T3', 'T4']);
+      final outputs = [
+        for (var s = 0; s < 6; s++)
+          RecommendationEngine.surpriseSongs(
+                  topByTag: tagTracks(30), count: 5, random: Random(s))
+              .map((e) => e.track.title)
+              .toList(),
+      ];
+      // Randomised runs are not all identical to each other, and at
+      // least one differs from the deterministic top 5.
+      expect(outputs.toSet().length, greaterThan(1));
+      expect(
+          outputs.any((o) =>
+              o.toSet() != deterministic.map((e) => e.track.title).toSet()),
+          isTrue);
+      for (final o in outputs) {
+        expect(o.length, 5);
+        expect(o.toSet().length, 5); // no duplicates
+        // All sampled from the top 15 (3x count) candidate pool.
+        for (final title in o) {
+          expect(int.parse(title.substring(1)), lessThan(15));
+        }
+      }
+    });
+
+    test('random with fresh tracks still returns count without duplicates',
+        () {
+      final out = RecommendationEngine.surpriseSongs(
+        topByTag: tagTracks(30),
+        chartTracks: [const TagTrack(artist: 'C', title: 'Chart', listeners: 1)],
+        count: 10,
+        random: Random(9),
+      );
+      expect(out.length, 10);
+      final keys = out
+          .map((e) =>
+              RecommendationEngine.normalizeKey(e.track.artist, e.track.title))
+          .toList();
+      expect(keys.toSet().length, keys.length);
+    });
+
+    test('small pool returns all without duplicates', () {
+      final out = RecommendationEngine.surpriseSongs(
+          topByTag: tagTracks(3), count: 10, random: Random(7));
+      expect(out.length, 3);
+      expect(out.map((e) => e.track.title).toSet().length, 3);
+    });
+
+    test('albums: same seed same, different seeds differ, small pool safe',
+        () {
+      Map<String, List<TagAlbum>> albums(int n) => {
+            'pop': [
+              for (var i = 0; i < n; i++)
+                TagAlbum(artist: 'A$i', name: 'Alb$i'),
+            ],
+          };
+      final a = RecommendationEngine.surpriseAlbums(
+          topByTag: albums(20), count: 5, random: Random(3));
+      final b = RecommendationEngine.surpriseAlbums(
+          topByTag: albums(20), count: 5, random: Random(3));
+      expect(a.map((e) => e.name), b.map((e) => e.name));
+      final varied = [
+        for (var s = 0; s < 6; s++)
+          RecommendationEngine.surpriseAlbums(
+                  topByTag: albums(20), count: 5, random: Random(s))
+              .map((e) => e.name)
+              .toList(),
+      ];
+      expect(varied.toSet().length, greaterThan(1));
+      final small = RecommendationEngine.surpriseAlbums(
+          topByTag: albums(2), count: 5, random: Random(1));
+      expect(small.length, 2);
+    });
+
+    test('no Random keeps the old deterministic ranking (Daily Picks path)',
+        () {
+      final out = RecommendationEngine.surpriseSongs(
+          topByTag: tagTracks(30), count: 5);
+      expect(out.map((e) => e.track.title), ['T0', 'T1', 'T2', 'T3', 'T4']);
+      final albums = RecommendationEngine.surpriseAlbums(
+        topByTag: {
+          'pop': [TagAlbum(artist: 'A', name: 'One'), TagAlbum(artist: 'B', name: 'Two')],
+        },
+        count: 2,
+      );
+      expect(albums.map((e) => e.name), ['One', 'Two']);
     });
   });
 

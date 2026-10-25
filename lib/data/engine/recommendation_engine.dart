@@ -2,6 +2,8 @@
 // FR-11, FR-19). All Last.fm I/O is injected; this file only does
 // selection, scoring, blending, dedupe and explanation.
 
+import 'dart:math';
+
 import '../lastfm/lastfm_client.dart';
 import '../models/music_models.dart';
 import '../../core/constants.dart';
@@ -429,6 +431,13 @@ class RecommendationEngine {
     required Map<String, List<TagTrack>> topByTag,
     List<TagTrack> chartTracks = const [],
     required int count,
+    // When null (the default), behaviour is exactly the old deterministic
+    // one: merge, dedupe, rank by listeners desc, take top [count].
+    // Daily Picks calls without a Random and is therefore unchanged.
+    // When given, songs are random-sampled from a top candidate pool
+    // (3x [count]) instead of taking the top [count], so consecutive
+    // Surprise runs differ in both set and order.
+    Random? random,
   }) {
     final best = <String, TagTrack>{};
     final tagOf = <String, String>{};
@@ -452,6 +461,19 @@ class RecommendationEngine {
           reasons: ['Popular in ${tagOf[k]}'],
         )
     ];
+    if (random != null) {
+      final poolSize =
+          count <= 0 ? 0 : (base.length < count * 3 ? base.length : count * 3);
+      final pool = base.take(poolSize).toList()..shuffle(random);
+      if (chartTracks.isEmpty) return pool.take(count).toList();
+      return blendWithInjections(
+        core: pool,
+        modifierPool: const [],
+        chartTracks: chartTracks,
+        total: count,
+        seedKeys: const {},
+      );
+    }
     if (chartTracks.isEmpty) return base.take(count).toList();
     return blendWithInjections(
       core: base,
@@ -467,6 +489,9 @@ class RecommendationEngine {
   static List<AlbumRec> surpriseAlbums({
     required Map<String, List<TagAlbum>> topByTag,
     required int count,
+    // Null = old deterministic fetch-order behaviour (Daily Picks path).
+    // Given = random-sample the deduped pool, like surpriseSongs.
+    Random? random,
   }) {
     final seen = <String>{};
     final recs = <AlbumRec>[];
@@ -483,9 +508,9 @@ class RecommendationEngine {
             songs: const [],
           ));
         }
-        if (recs.length >= count) return recs;
       }
     }
-    return recs;
+    if (random != null) recs.shuffle(random);
+    return recs.take(count).toList();
   }
 }
