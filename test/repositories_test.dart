@@ -60,7 +60,7 @@ void main() {
 
     test('album favorites live alongside tracks without mixing', () {
       repo.toggle(const Track(title: 'Song', artist: 'Artist'));
-      final album = const AlbumRec(
+      const album = AlbumRec(
           name: 'Alb', artist: 'Artist', songCount: 2, bestScore: 1, songs: []);
       expect(repo.toggleAlbum(album), isTrue);
       expect(repo.isAlbumFavorite('Artist', 'Alb'), isTrue);
