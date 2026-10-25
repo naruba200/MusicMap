@@ -122,16 +122,16 @@ class RecommendationEngine {
     t = t.replaceAll(RegExp(r'\s*\([^)]*\)'), '');
     t = t.replaceAll(RegExp(r'\s*\[[^\]]*\]'), '');
     t = t.replaceAll(
-        RegExp(r'\s+(feat\.?|ft\.?|featuring)\s+.*\$',
+        RegExp(r'\s+(feat\.?|ft\.?|featuring)\s+.*$',
             caseSensitive: false),
         '');
     t = t.replaceAll(
         RegExp(
             r'\s*[-–—]\s*(tv\s*-?\s*size|short\s+ver\.?|'
-            r'short\s+version|radio\s+edit)\s*\$',
+            r'short\s+version|radio\s+edit)\s*$',
             caseSensitive: false),
         '');
-    t = t.replaceAll(RegExp(r'\s*[-–—]\s*\$'), '');
+    t = t.replaceAll(RegExp(r'\s*[-–—]\s*$'), '');
     t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
     return t.isEmpty ? title.trim() : t;
   }
