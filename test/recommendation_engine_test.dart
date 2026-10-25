@@ -511,7 +511,7 @@ void main() {
       expect(out.map((e) => e.track.title), ['T0', 'T1', 'T2', 'T3', 'T4']);
       final albums = RecommendationEngine.surpriseAlbums(
         topByTag: {
-          'pop': [TagAlbum(artist: 'A', name: 'One'), TagAlbum(artist: 'B', name: 'Two')],
+          'pop': [const TagAlbum(artist: 'A', name: 'One'), const TagAlbum(artist: 'B', name: 'Two')],
         },
         count: 2,
       );
