@@ -1,0 +1,332 @@
+// Tests for the Last.fm error-6 fallback chain (see
+// lib/data/fallback/fallback_sources.dart): title cleaning, structured
+// error codes, Deezer/iTunes parsing, per-seed resolution, and
+// fallback scoring weight/reasons. No live API is called: Last.fm
+// responses are canned via a Dio adapter, other sources via callbacks.
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:music_man/data/engine/recommendation_engine.dart';
+import 'package:music_man/data/fallback/fallback_sources.dart';
+import 'package:music_man/data/lastfm/lastfm_client.dart';
+import 'package:music_man/data/models/music_models.dart';
+
+Track _t(String artist, String title) => Track(artist: artist, title: title);
+
+SimilarTrack _s(String artist, String title, [double match = 0.5]) =>
+    SimilarTrack(artist: artist, title: title, match: match);
+
+void main() {
+  group('cleanTrackTitle', () {
+    test('leaves a plain base title unchanged', () {
+      expect(RecommendationEngine.cleanTrackTitle('Bohemian Rhapsody'),
+          'Bohemian Rhapsody');
+    });
+
+    test('strips parenthetical and bracket segments', () {
+      expect(
+          RecommendationEngine.cleanTrackTitle('My Song (TV Size)'),
+          'My Song');
+      expect(
+          RecommendationEngine.cleanTrackTitle('My Song [Official Video]'),
+          'My Song');
+      expect(
+          RecommendationEngine.cleanTrackTitle('My Song (feat. Guest)'),
+          'My Song');
+    });
+
+    test('strips trailing feat credits and version tags', () {
+      expect(RecommendationEngine.cleanTrackTitle('My Song feat. Guest'),
+          'My Song');
+      expect(RecommendationEngine.cleanTrackTitle('My Song ft. Guest'),
+          'My Song');
+      expect(RecommendationEngine.cleanTrackTitle('My Song - TV Size'),
+          'My Song');
+      expect(RecommendationEngine.cleanTrackTitle('My Song - TV-size'),
+          'My Song');
+      expect(RecommendationEngine.cleanTrackTitle('My Song - Short ver.'),
+          'My Song');
+    });
+
+    test('combined suffixes collapse to the base title', () {
+      expect(
+          RecommendationEngine.cleanTrackTitle(
+              'My Song feat. Guest (TV Size)'),
+          'My Song');
+    });
+  });
+
+  group('LastFmException error codes', () {
+    test('fromApi keeps the message format and parses code 6', () {
+      final e =
+          LastFmException.fromApi(6, 'Track not found');
+      expect(e.toString(), 'Last.fm error 6: Track not found');
+      expect(e.code, 6);
+      expect(e.isTrackNotFound, isTrue);
+    });
+
+    test('other codes and transport errors are not "not found"', () {
+      expect(LastFmException.fromApi(10, 'Invalid API key').isTrackNotFound,
+          isFalse);
+      expect(const LastFmException('boom').code, isNull);
+      expect(const LastFmException('boom').isTrackNotFound, isFalse);
+      expect(const LastFmException('boom').toString(), 'boom');
+    });
+
+    test('a canned error-6 envelope throws with code 6', () async {
+      final dio = Dio();
+      dio.httpClientAdapter = _CannedAdapter(
+          (_) => {'error': 6, 'message': 'Track not found'});
+      final client = LastFmClient(dio: dio, apiKey: 'test-key');
+      try {
+        await client.getSimilarTracks('A', 'Nope');
+        fail('expected LastFmException');
+      } on LastFmException catch (e) {
+        expect(e.code, 6);
+        expect(e.isTrackNotFound, isTrue);
+      }
+    });
+
+    test('getSimilarArtists parses the similarartists envelope', () async {
+      final dio = Dio();
+      dio.httpClientAdapter = _CannedAdapter((method) {
+        if (method == 'artist.getSimilar') {
+          return {
+            'similarartists': {
+              'artist': [
+                {'name': 'Similar One'},
+                {'name': 'Similar Two'},
+              ]
+            }
+          };
+        }
+        return <String, dynamic>{};
+      });
+      final client = LastFmClient(dio: dio, apiKey: 'test-key');
+      expect(await client.getSimilarArtists('A'),
+          ['Similar One', 'Similar Two']);
+    });
+  });
+
+  group('Deezer / iTunes parsing', () {
+    test('parseDeezerArtistId takes the first id, null when missing', () {
+      expect(
+          parseDeezerArtistId({
+            'data': [
+              {'id': 123, 'name': 'Artist'},
+            ]
+          }),
+          '123');
+      expect(parseDeezerArtistId({'data': []}), isNull);
+      expect(parseDeezerArtistId({}), isNull);
+    });
+
+    test('parseDeezerTracks reads title + artist object, drops empties', () {
+      final tracks = parseDeezerTracks({
+        'data': [
+          {'title': 'Hit', 'artist': {'name': 'Artist'}},
+          {'title': '', 'artist': {'name': 'Artist'}},
+          {'title': 'No Artist', 'artist': {'name': ''}},
+        ]
+      });
+      expect(tracks.length, 1);
+      expect(tracks.single.title, 'Hit');
+      expect(tracks.single.artist, 'Artist');
+    });
+
+    test('parseDeezerRelatedIds collects ids', () {
+      expect(
+          parseDeezerRelatedIds({
+            'data': [
+              {'id': 1},
+              {'id': 2},
+            ]
+          }),
+          ['1', '2']);
+    });
+
+    test('parseITunesTracks reads trackName + artistName', () {
+      final tracks = parseITunesTracks({
+        'results': [
+          {'trackName': 'Song', 'artistName': 'Singer'},
+          {'trackName': '', 'artistName': 'Singer'},
+        ]
+      });
+      expect(tracks.length, 1);
+      expect(tracks.single.title, 'Song');
+    });
+  });
+
+  group('resolveSeedSimilars', () {
+    Future<SeedSimilarResult> resolve({
+      Future<List<SimilarTrack>> Function(String, String)? getSimilar,
+      Future<List<TagTrack>> Function(String, int)? getArtistTop,
+      Future<List<String>> Function(String)? getSimilarArtistsFn,
+      Future<List<SimilarTrack>> Function(String)? deezer,
+      Future<List<SimilarTrack>> Function(String)? itunes,
+    }) =>
+        resolveSeedSimilars(
+          artist: 'Obscure Artist',
+          title: 'Obscure Song (TV Size)',
+          getSimilar: getSimilar ??
+              (_, __) async => throw const LastFmException(
+                  'Last.fm error 6: Track not found',
+                  code: 6),
+          getArtistTopTracks: getArtistTop ?? (_, __) async => const [],
+          getSimilarArtists: getSimilarArtistsFn ?? (_) async => const [],
+          deezerArtistTracks: deezer ?? (_) async => const [],
+          itunesArtistTracks: itunes ?? (_) async => const [],
+        );
+
+    test('a true similar hit wins and no fallback is called', () async {
+      var fallbackCalled = false;
+      final result = await resolve(
+        getSimilar: (_, __) async => [_s('Sim Artist', 'Sim Song')],
+        getArtistTop: (_, __) async {
+          fallbackCalled = true;
+          return const [];
+        },
+      );
+      expect(result.tracks.single.title, 'Sim Song');
+      expect(result.isFallback, isFalse);
+      expect(fallbackCalled, isFalse);
+    });
+
+    test('error 6 falls back to the artist top tracks', () async {
+      final result = await resolve(
+        getArtistTop: (_, __) async => [
+          const TagTrack(artist: 'Obscure Artist', title: 'Artist Hit', listeners: 9),
+        ],
+      );
+      expect(result.isFallback, isTrue);
+      expect(result.fallbackReason, 'More from Obscure Artist');
+      expect(result.tracks.single.title, 'Artist Hit');
+    });
+
+    test('error 6 falls through to Deezer when Last.fm is empty', () async {
+      final result = await resolve(
+        deezer: (_) async => [_s('Deezer Artist', 'Deezer Song')],
+      );
+      expect(result.fallbackReason, 'From Deezer');
+      expect(result.tracks.single.title, 'Deezer Song');
+    });
+
+    test('a Deezer throw (sinkhole) moves on to iTunes, never aborts',
+        () async {
+      final result = await resolve(
+        deezer: (_) async => throw Exception('connection refused'),
+        itunes: (_) async => [_s('iTunes Artist', 'iTunes Song')],
+      );
+      expect(result.fallbackReason, 'From iTunes');
+      expect(result.tracks.single.title, 'iTunes Song');
+    });
+
+    test('a non-6 Last.fm error still aborts', () async {
+      await expectLater(
+        resolve(
+          getSimilar: (_, __) async => throw const LastFmException(
+              'Last.fm error 10: Invalid API key',
+              code: 10),
+        ),
+        throwsA(isA<LastFmException>()),
+      );
+    });
+
+    test('one error-6 seed does not kill a multi-seed loop', () async {
+      // Simulates the provider loop: seed 1 exhausts every fallback,
+      // seed 2 returns true similars. The loop must not throw.
+      Future<SeedSimilarResult> forSeed(String title) {
+        if (title == 'Missing Song') {
+          return resolve();
+        }
+        return resolveSeedSimilars(
+          artist: 'Known Artist',
+          title: title,
+          getSimilar: (_, __) async => [_s('Sim Artist', 'Sim Song')],
+          getArtistTopTracks: (_, __) async => const [],
+          getSimilarArtists: (_) async => const [],
+          deezerArtistTracks: (_) async => const [],
+          itunesArtistTracks: (_) async => const [],
+        );
+      }
+
+      final results = <SeedSimilarResult>[];
+      for (final title in ['Missing Song', 'Known Song']) {
+        results.add(await forSeed(title));
+      }
+      expect(results[0].tracks, isEmpty);
+      expect(results[1].tracks.single.title, 'Sim Song');
+    });
+  });
+
+  group('scoreCandidates fallback weighting', () {
+    test('fallback tracks score below true hits and carry the reason',
+        () {
+      final scored = RecommendationEngine.scoreCandidates(
+        seeds: [_t('Seed Artist', 'Seed Song')],
+        similarBySeed: {
+          0: [_s('Core Artist', 'Core Song')],
+        },
+        fallbackBySeed: {
+          0: [_s('Fallback Artist', 'Fallback Song')],
+        },
+        fallbackReasonBySeed: {0: 'From Deezer'},
+      );
+      expect(scored.first.track.title, 'Core Song');
+      expect(scored.first.score, 1.0);
+      expect(scored[1].track.title, 'Fallback Song');
+      expect(scored[1].score, closeTo(0.4, 0.001));
+      expect(scored[1].reasons, ['From Deezer']);
+    });
+
+    test('fallback rank weight decays and seed tracks are excluded', () {
+      final scored = RecommendationEngine.scoreCandidates(
+        seeds: [_t('Seed Artist', 'Seed Song')],
+        similarBySeed: const {},
+        fallbackBySeed: {
+          0: [
+            _s('Fallback Artist', 'First Song'),
+            _s('Fallback Artist', 'Second Song'),
+            _s('Seed Artist', 'Seed Song'),
+          ],
+        },
+        fallbackReasonBySeed: {0: 'From iTunes'},
+      );
+      expect(scored.length, 2);
+      expect(scored[0].score, closeTo(0.4, 0.001));
+      expect(scored[1].score, closeTo(0.2, 0.001));
+      expect(scored.every((s) => s.track.title != 'Seed Song'), isTrue);
+    });
+  });
+}
+
+/// Answers with the payload [respond] builds for the requested
+/// Last.fm `method` query parameter.
+class _CannedAdapter implements HttpClientAdapter {
+  final Map<String, dynamic> Function(String method) respond;
+  _CannedAdapter(this.respond);
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    await requestStream?.drain<void>();
+    final method = options.queryParameters['method'] as String? ?? '';
+    return ResponseBody.fromString(
+      jsonEncode(respond(method)),
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
