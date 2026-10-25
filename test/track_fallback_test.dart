@@ -159,6 +159,17 @@ void main() {
       expect(tracks.length, 1);
       expect(tracks.single.title, 'Song');
     });
+
+    test('parseITunesPreviewUrl extracts previewUrl', () {
+      expect(
+          parseITunesPreviewUrl({
+            'previewUrl': 'https://example.com/preview.m4a',
+          }),
+          'https://example.com/preview.m4a');
+      expect(parseITunesPreviewUrl({'previewUrl': ''}), isNull);
+      expect(parseITunesPreviewUrl({}), isNull);
+      expect(parseITunesPreviewUrl('not a map'), isNull);
+    });
   });
 
   group('resolveSeedSimilars', () {
@@ -167,7 +178,8 @@ void main() {
       Future<List<TagTrack>> Function(String, int)? getArtistTop,
       Future<List<String>> Function(String)? getSimilarArtistsFn,
       Future<List<SimilarTrack>> Function(String)? deezer,
-      Future<List<SimilarTrack>> Function(String)? itunes,
+      Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
+              Function(String)? itunes,
     }) =>
         resolveSeedSimilars(
           artist: 'Obscure Artist',
@@ -179,7 +191,9 @@ void main() {
           getArtistTopTracks: getArtistTop ?? (_, __) async => const [],
           getSimilarArtists: getSimilarArtistsFn ?? (_) async => const [],
           deezerArtistTracks: deezer ?? (_) async => const [],
-          itunesArtistTracks: itunes ?? (_) async => const [],
+          itunesArtistTracksWithPreviews: itunes ??
+              (_) async =>
+                  (tracks: const <SimilarTrack>[], previews: <String, String>{}),
         );
 
     test('a true similar hit wins and no fallback is called', () async {
@@ -191,8 +205,8 @@ void main() {
           return const [];
         },
       );
-      expect(result.tracks.single.title, 'Sim Song');
-      expect(result.isFallback, isFalse);
+      expect(result.similars.single.title, 'Sim Song');
+      expect(result.fallbackReason, isNull);
       expect(fallbackCalled, isFalse);
     });
 
@@ -202,27 +216,40 @@ void main() {
           const TagTrack(artist: 'Obscure Artist', title: 'Artist Hit', listeners: 9),
         ],
       );
-      expect(result.isFallback, isTrue);
       expect(result.fallbackReason, 'More from Obscure Artist');
-      expect(result.tracks.single.title, 'Artist Hit');
+      expect(result.fallbacks.single.title, 'Artist Hit');
     });
 
     test('error 6 falls through to Deezer when Last.fm is empty', () async {
       final result = await resolve(
         deezer: (_) async => [_s('Deezer Artist', 'Deezer Song')],
       );
-      expect(result.fallbackReason, 'From Deezer');
-      expect(result.tracks.single.title, 'Deezer Song');
+      expect(result.fallbackReason, 'More from Obscure Artist');
+      expect(result.fallbacks.single.title, 'Deezer Song');
     });
 
     test('a Deezer throw (sinkhole) moves on to iTunes, never aborts',
         () async {
       final result = await resolve(
         deezer: (_) async => throw Exception('connection refused'),
-        itunes: (_) async => [_s('iTunes Artist', 'iTunes Song')],
+        itunes: (_) async => (tracks: [_s('iTunes Artist', 'iTunes Song')],
+            previews: {'itunes artist - itunes song': 'https://x.m4a'}),
       );
-      expect(result.fallbackReason, 'From iTunes');
-      expect(result.tracks.single.title, 'iTunes Song');
+      expect(result.fallbackReason, 'More from Obscure Artist');
+      expect(result.fallbacks.single.title, 'iTunes Song');
+      expect(result.fallbackPreviews['itunes artist - itunes song'],
+          'https://x.m4a');
+    });
+
+    test('Last.fm similars and Deezer/iTunes run concurrently (both returned)',
+        () async {
+      final result = await resolve(
+        getSimilar: (_, __) async => [_s('Sim Artist', 'Sim Song')],
+        deezer: (_) async => [_s('Deezer Artist', 'Deezer Song')],
+      );
+      expect(result.similars.single.title, 'Sim Song');
+      expect(result.fallbacks.single.title, 'Deezer Song');
+      expect(result.fallbackReason, 'More from Obscure Artist');
     });
 
     test('a non-6 Last.fm error still aborts', () async {
@@ -250,7 +277,10 @@ void main() {
           getArtistTopTracks: (_, __) async => const [],
           getSimilarArtists: (_) async => const [],
           deezerArtistTracks: (_) async => const [],
-          itunesArtistTracks: (_) async => const [],
+          itunesArtistTracksWithPreviews:
+              (_) async =>
+                  (tracks: const <SimilarTrack>[],
+                      previews: <String, String>{}),
         );
       }
 
@@ -258,8 +288,8 @@ void main() {
       for (final title in ['Missing Song', 'Known Song']) {
         results.add(await forSeed(title));
       }
-      expect(results[0].tracks, isEmpty);
-      expect(results[1].tracks.single.title, 'Sim Song');
+      expect(results[0].isEmpty, isTrue);
+      expect(results[1].similars.single.title, 'Sim Song');
     });
   });
 

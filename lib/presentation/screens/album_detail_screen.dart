@@ -3,18 +3,21 @@
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/engine/recommendation_engine.dart';
+import '../../data/models/music_models.dart';
+import '../providers/generation_provider.dart';
 import '../widgets/favorite_button.dart';
 import '../widgets/outbound_sheet.dart';
 
-class AlbumDetailScreen extends StatelessWidget {
+class AlbumDetailScreen extends ConsumerWidget {
   final AlbumRec album;
 
   const AlbumDetailScreen({super.key, required this.album});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final recommendedKeys = {
       for (final s in album.songs)
@@ -109,6 +112,7 @@ class AlbumDetailScreen extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         FavoriteButton(track: track),
+                        _PreviewButton(track: track),
                         IconButton(
                           icon: const Icon(Icons.open_in_new),
                           tooltip: 'Open in…',
@@ -123,6 +127,38 @@ class AlbumDetailScreen extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// Play/pause button for a 30-second track preview (iTunes preview URL).
+/// Uses a shared audio player so only one preview plays at a time.
+class _PreviewButton extends ConsumerWidget {
+  final Track track;
+
+  const _PreviewButton({required this.track});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final player = ref.read(audioPlayerProvider.notifier);
+    final hasPreview = track.previewUrl != null && track.previewUrl!.isNotEmpty;
+    final key = '${track.artist.toLowerCase().trim()} - ${track.title.toLowerCase().trim()}';
+    final isPlaying = hasPreview &&
+        ref.read(audioPlayerProvider.notifier).playingKey == key;
+
+    if (!hasPreview) {
+      return const Icon(
+        Icons.audiotrack,
+        size: 20,
+        color: Colors.grey,
+      );
+    }
+
+    return IconButton(
+      icon: Icon(isPlaying ? Icons.pause : Icons.play_circle_outline,
+          color: isPlaying ? Theme.of(context).colorScheme.primary : null),
+      tooltip: isPlaying ? 'Pause preview' : 'Play preview',
+      onPressed: () => player.play(track),
     );
   }
 }

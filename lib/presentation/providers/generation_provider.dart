@@ -2,8 +2,10 @@
 // scoring, Surprise-me mode, and live related genres (spec FR-04e…FR-11,
 // FR-19). The engine itself stays pure Dart in data/engine.
 
+import 'dart:async';
 import 'dart:math';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -12,6 +14,7 @@ import '../../data/engine/recommendation_engine.dart';
 import '../../data/fallback/fallback_sources.dart';
 import '../../data/lastfm/lastfm_client.dart';
 import '../../data/models/music_models.dart';
+import '../../data/repositories/favorites_repository.dart';
 import '../../data/repositories/history_repository.dart';
 import 'providers.dart';
 
@@ -74,13 +77,11 @@ class GenerationResult {
         songs: (json['songs'] as List?)
                 ?.whereType<Map>()
                 .map((m) => ScoredTrack.fromJson(m.cast<String, dynamic>()))
-                .toList() ??
-            const [],
+                .toList() ?? const [],
         albums: (json['albums'] as List?)
                 ?.whereType<Map>()
                 .map((m) => AlbumRec.fromJson(m.cast<String, dynamic>()))
-                .toList() ??
-            const [],
+                .toList() ?? const [],
         seedName: json['seedName'] as String? ?? 'Recommendations',
         isSurprise: json['isSurprise'] as bool? ?? false,
         seedCount: (json['seedCount'] as num?)?.toInt() ?? 0,
@@ -122,9 +123,11 @@ class GenerationState {
 }
 
 final generationProvider =
-    StateNotifierProvider<GenerationNotifier, GenerationState>((ref) =>
+    StateNotifierProvider<GenerationNotifier, GenerationState>((ref) => 
         GenerationNotifier(
-            ref.watch(dioProvider), ref.watch(historyRepositoryProvider)));
+            ref.watch(dioProvider),
+            ref.watch(historyRepositoryProvider),
+            ref.watch(favoritesRepositoryProvider)));
 
 /// Related genres for a selected genre chip, live via Last.fm tag.getSimilar
 /// with the static fallback map on failure. Cached per genre for the session.
@@ -153,6 +156,7 @@ String _displayTag(String tag) =>
 class GenerationNotifier extends StateNotifier<GenerationState> {
   final Dio _dio;
   final HistoryRepository _history;
+  final FavoritesRepository _favorites;
 
   /// Cross-source fallbacks use their own plain Dio (see
   /// FallbackSources): a sinkholed Deezer host must fail fast instead
@@ -160,7 +164,8 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   late final FallbackSources _fallbacks = FallbackSources();
   bool _cancelled = false;
 
-  GenerationNotifier(this._dio, this._history) : super(GenerationState.idle);
+  GenerationNotifier(this._dio, this._history, this._favorites)
+      : super(GenerationState.idle);
 
   LastFmClient get _lfm => LastFmClient(dio: _dio, apiKey: lastFmApiKey);
 
@@ -188,6 +193,60 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
     state = GenerationState.idle;
   }
 
+  /// Build a "learned" Fresh Finds pool from the user's favorited artists.
+  /// For each favorited artist (capped at 8), fetch their top tracks on
+  /// Last.fm. The more favorites you have, the larger this pool relative
+  /// to the raw global chart — a light learning signal. Falls back to the
+  /// global chart when there are no favorites yet.
+  Future<List<TagTrack>> _buildFreshPool({
+    required bool freshFinds,
+  }) async {
+    if (!freshFinds) return const [];
+
+    final chartTracks = await _lfm.getChartTopTracks();
+    final favArtists = _favorites.favoritedArtists();
+    if (favArtists.isEmpty) return chartTracks;
+
+    final learned = <TagTrack>[];
+    final seen = <String>{};
+    for (final artist in favArtists.take(8)) {
+      try {
+        final topTracks = await _lfm.getArtistTopTracks(artist, limit: 10);
+        for (final t in topTracks) {
+          final key =
+              RecommendationEngine.normalizeKey(t.artist, t.title);
+          if (seen.add(key)) {
+            learned.add(TagTrack(
+              artist: t.artist,
+              title: t.title,
+              listeners: t.listeners,
+            ));
+          }
+        }
+      } catch (_) {
+        // one bad artist must not kill fresh finds
+      }
+    }
+
+    if (learned.isEmpty) return chartTracks;
+
+    // Merge learned tracks ahead of chart tracks, deduped by normalized key.
+    final merged = <TagTrack>[];
+    merged.addAll(learned);
+    final chartKeys = <String>{};
+    for (final t in learned) {
+      chartKeys.add(RecommendationEngine.normalizeKey(t.artist, t.title));
+    }
+    for (final t in chartTracks) {
+      final key = RecommendationEngine.normalizeKey(t.artist, t.title);
+      if (!chartKeys.contains(key)) {
+        merged.add(t);
+        chartKeys.add(key);
+      }
+    }
+    return merged;
+  }
+
   /// Playlist-seeded run (FR-05…FR-09, FR-11).
   Future<void> generateFromPlaylist({
     required String seedName,
@@ -209,16 +268,15 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         );
       }
 
-      // 1. Similar tracks per seed (FR-06), with the error-6
-      // fallback chain (see resolveSeedSimilars): a single track
-      // that Last.fm does not know no longer kills the run — it is
-      // skipped (or replaced by an artist / cross-source fallback)
-      // and the other seeds carry on. Only a non-6 error (network,
-      // key, rate limit) still aborts, via resolveSeedSimilars'
-      // rethrow, caught by the outer LastFmException handler.
+      // 1. Similar tracks per seed (FR-06). All no-auth sources
+      // (Last.fm, Deezer, iTunes) run concurrently per seed; Last.fm
+      // similars are weighted at 1.0, Deezer/iTunes/artist-top at 0.4.
       final similarBySeed = <int, List<SimilarTrack>>{};
       final fallbackBySeed = <int, List<SimilarTrack>>{};
       final fallbackReasonBySeed = <int, String>{};
+      // previewUrl by normalized key, so tracks from iTunes carry a
+      // 30-second preview URL for in-app playback.
+      final previewByKey = <String, String>{};
       var skipped = 0;
       for (var i = 0; i < selection.seeds.length; i++) {
         if (_cancelled) return _abort();
@@ -232,15 +290,23 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
               _lfm.getArtistTopTracks(a, limit: limit),
           getSimilarArtists: (a) => _lfm.getSimilarArtists(a),
           deezerArtistTracks: _fallbacks.deezerArtistTracks,
-          itunesArtistTracks: _fallbacks.itunesArtistTracks,
+          itunesArtistTracksWithPreviews:
+              _fallbacks.itunesArtistTracksWithPreviews,
         );
-        if (resolved.tracks.isEmpty) {
+        if (resolved.isEmpty) {
           skipped++;
-        } else if (resolved.isFallback) {
-          fallbackBySeed[i] = resolved.tracks;
-          fallbackReasonBySeed[i] = resolved.fallbackReason!;
         } else {
-          similarBySeed[i] = resolved.tracks;
+          if (resolved.hasSimilars) {
+            similarBySeed[i] = resolved.similars;
+          }
+          if (resolved.hasFallbacks) {
+            fallbackBySeed[i] = resolved.fallbacks;
+            fallbackReasonBySeed[i] =
+                resolved.fallbackReason ??
+                'More from ${RecommendationEngine.primaryArtist(seed.artist)}';
+          }
+          // Stash iTunes preview URLs by normalized track key.
+          previewByKey.addAll(resolved.fallbackPreviews);
         }
       }
       _setProgress('Finding similar tracks', selection.seeds.length,
@@ -256,12 +322,91 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         );
       }
 
-      final scored = RecommendationEngine.scoreCandidates(
+      var scored = RecommendationEngine.scoreCandidates(
         seeds: selection.seeds,
         similarBySeed: similarBySeed,
         fallbackBySeed: fallbackBySeed,
         fallbackReasonBySeed: fallbackReasonBySeed,
       );
+
+      // 1b. Aggressive expansion (fixes sparse results): if the core pool
+      // is smaller than the requested count, query each seed artist's own
+      // top tracks on Last.fm and add them as additional fallback-weighted
+      // candidates. This guarantees the pool has enough material to fill
+      // the requested song count even when Last.fm doesn't know most
+      // seed tracks.
+      if (scored.length < settings.songCount) {
+        if (_cancelled) return _abort();
+        _setProgress('Expanding seed artists', 0, selection.seeds.length);
+        final expansionBySeed = <int, List<SimilarTrack>>{};
+        var expIdx = 0;
+        for (var i = 0; i < selection.seeds.length; i++) {
+          if (_cancelled) return _abort();
+          final seed = selection.seeds[i];
+          final artist = RecommendationEngine.primaryArtist(seed.artist);
+          try {
+            final topTracks = await _lfm.getArtistTopTracks(artist, limit: 15);
+            final sims = <SimilarTrack>[];
+            for (final t in topTracks) {
+              sims.add(SimilarTrack(
+                artist: t.artist,
+                title: t.title,
+                match: 0,
+              ));
+              // Stash iTunes-free preview: artist top tracks don't carry
+              // preview URLs, so these stay preview-less unless resolved
+              // on demand later.
+            }
+            if (sims.isNotEmpty) {
+              expansionBySeed[i] = sims;
+            }
+          } catch (_) {
+            // one bad artist must not kill the run
+          }
+          _setProgress('Expanding seed artists', ++expIdx,
+              selection.seeds.length);
+        }
+        if (expansionBySeed.isNotEmpty) {
+          final expansionReasons = <int, String>{};
+          for (var i = 0; i < selection.seeds.length; i++) {
+            if (expansionBySeed.containsKey(i)) {
+              expansionReasons[i] =
+                  'More from ${RecommendationEngine.primaryArtist(selection.seeds[i].artist)}';
+            }
+          }
+          final expanded = RecommendationEngine.scoreCandidates(
+            seeds: selection.seeds,
+            similarBySeed: similarBySeed,
+            fallbackBySeed: {
+              ...fallbackBySeed,
+              ...expansionBySeed,
+            },
+            fallbackReasonBySeed: {
+              ...fallbackReasonBySeed,
+              ...expansionReasons,
+            },
+          );
+          // Merge: keep original scores for tracks already present, add
+          // new expansion tracks at their scored values.
+          final existingKeys = {
+            for (final s in scored)
+              RecommendationEngine.normalizeKey(
+                  s.track.artist, s.track.title)
+          };
+          final merged = <ScoredTrack>[];
+          merged.addAll(scored);
+          for (final e in expanded) {
+            final key = RecommendationEngine.normalizeKey(
+                e.track.artist, e.track.title);
+            if (!existingKeys.contains(key)) {
+              merged.add(e);
+              existingKeys.add(key);
+            }
+          }
+          merged.sort((a, b) => b.score.compareTo(a.score));
+          scored = merged;
+        }
+      }
 
       // 2. Discovery modifiers (FR-07b, §30 seed mode): fetch each tag's
       // top tracks, take tag seeds round-robin, expand them via
@@ -282,11 +427,6 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           if (_cancelled) return _abort();
           _setProgress('Expanding your tags', i, tagSelection.seeds.length);
           final seed = tagSelection.seeds[i];
-          // Tag seeds get the per-seed skip + cleaned-title retry
-          // only: the tag seed tracks themselves already head the
-          // pool, so a failed expansion just loses its similars,
-          // and the full cross-source chain is not worth the calls
-          // here. Non-6 errors still rethrow and abort.
           final sims = await _similarOrCleaned(
             RecommendationEngine.primaryArtist(seed.artist),
             seed.title,
@@ -298,6 +438,24 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           similarBySeed: similarByTagSeed,
           tagOfKey: tagSelection.tagOfKey,
         );
+      }
+
+      // 2b. Learned Fresh Finds: favorited-artist top tracks merged into
+      // the modifier pool so your taste shapes recommendations.
+      if (settings.freshFinds) {
+        if (_cancelled) return _abort();
+        _setProgress('Learning from your favorites', 0, 1);
+        final freshPool = await _buildFreshPool(freshFinds: true);
+        if (freshPool.isNotEmpty) {
+          modifierPool = [
+            ...modifierPool,
+            ...freshPool.map((t) => ScoredTrack(
+              track: Track(title: t.title, artist: t.artist),
+              score: 1.0,
+              reasons: const ['Based on your favorites'],
+            )),
+          ];
+        }
       }
 
       // 3. Fresh finds (FR-07c): the chart list, also injected by quota.
@@ -313,13 +471,37 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         for (final t in tracks)
           RecommendationEngine.normalizeKey(t.artist, t.title)
       };
-      final songs = RecommendationEngine.blendWithInjections(
+      var songs = RecommendationEngine.blendWithInjections(
         core: scored,
         modifierPool: modifierPool,
         chartTracks: chartTracks,
         total: settings.songCount,
         seedKeys: seedKeys,
       );
+
+      // Stash preview URLs onto tracks that have them.
+      songs = songs.map((st) {
+        final key =
+            RecommendationEngine.normalizeKey(st.track.artist, st.track.title);
+        final preview = previewByKey[key];
+        if (preview != null &&
+            st.track.previewUrl == null) {
+          return ScoredTrack(
+            track: Track(
+              title: st.track.title,
+              artist: st.track.artist,
+              album: st.track.album,
+              imageUrl: st.track.imageUrl,
+              durationMs: st.track.durationMs,
+              platformTrackId: st.track.platformTrackId,
+              previewUrl: preview,
+            ),
+            score: st.score,
+            reasons: st.reasons,
+          );
+        }
+        return st;
+      }).toList();
 
       // 5. Album enrichment (FR-11): track.getSimilar carries no album
       // data, so without this the Albums tab would always be empty.
@@ -347,6 +529,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
                       imageUrl: info.imageUrl ?? st.track.imageUrl,
                       durationMs: st.track.durationMs,
                       platformTrackId: st.track.platformTrackId,
+                      previewUrl: st.track.previewUrl,
                     ),
                     score: st.score,
                     reasons: st.reasons,
@@ -513,3 +696,88 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   }
 }
 
+/// Manages 30-second preview playback for recommended tracks.
+/// One shared player across the app; only one preview plays at a time.
+/// Resolves missing preview URLs on demand via iTunes search.
+class AudioPlayerNotifier extends StateNotifier<AsyncValue<Object?>> {
+  final AudioPlayer _player = AudioPlayer();
+  final FallbackSources _fallbacks;
+  String? _playingKey;
+  StreamSubscription<PlayerState>? _stateSub;
+  /// Cache of resolved preview URLs keyed by normalized track key.
+  final Map<String, String> _previewCache = {};
+
+  AudioPlayerNotifier(this._fallbacks) : super(const AsyncValue.data(null)) {
+    _stateSub = _player.onPlayerStateChanged.listen((playerState) {
+      if (playerState == PlayerState.completed && _playingKey != null) {
+        _playingKey = null;
+        state = const AsyncValue.data(null);
+      }
+    });
+  }
+
+  /// Normalized key for a track: "artist - title".
+  String _key(Track track) =>
+      '${track.artist.toLowerCase().trim()} - ${track.title.toLowerCase().trim()}';
+
+  bool get isPlaying => _playingKey != null;
+
+  String? get playingKey => _playingKey;
+
+  /// Resolve a preview URL for [track] from cache, the track itself, or
+  /// an on-demand iTunes search.
+  Future<String?> _resolvePreview(Track track) async {
+    final key = _key(track);
+    // Already cached.
+    final cached = _previewCache[key];
+    if (cached != null) return cached;
+    // Already on the track.
+    if (track.previewUrl != null && track.previewUrl!.isNotEmpty) {
+      _previewCache[key] = track.previewUrl!;
+      return track.previewUrl;
+    }
+    // On-demand iTunes lookup.
+    final preview = await _fallbacks.itunesTrackPreview(
+      track.artist, track.title,
+    );
+    if (preview != null) _previewCache[key] = preview;
+    return preview;
+  }
+
+  Future<void> play(Track track) async {
+    final preview = await _resolvePreview(track);
+    if (preview == null || preview.isEmpty) return;
+    final key = _key(track);
+    if (_playingKey == key) {
+      // Toggle: pause if already playing this track.
+      await _player.pause();
+      _playingKey = null;
+      state = const AsyncValue.data(null);
+      return;
+    }
+    // Stop any other track, then play this one.
+    await _player.stop();
+    await _player.play(UrlSource(preview));
+    _playingKey = key;
+    state = const AsyncValue.data(null);
+  }
+
+  Future<void> pause() async {
+    await _player.pause();
+    _playingKey = null;
+    state = const AsyncValue.data(null);
+  }
+
+  @override
+  void dispose() {
+    _stateSub?.cancel();
+    _player.dispose();
+    super.dispose();
+  }
+}
+
+/// Shared audio player provider for preview playback.
+final audioPlayerProvider =
+    StateNotifierProvider<AudioPlayerNotifier, AsyncValue<Object?>>(
+  (ref) => AudioPlayerNotifier(ref.watch(fallbackSourcesProvider)),
+);

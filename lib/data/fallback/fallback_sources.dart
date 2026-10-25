@@ -1,7 +1,8 @@
 // Multi-source fallback for a seed whose track is not found on Last.fm
-// (API error 6). Order per seed: Last.fm cleaned-title retry, Last.fm
-// artist top tracks, similar artists' top tracks, Deezer, iTunes.
-// Deezer is DNS-sinkholed on the user's home network, so every
+// (API error 6). All no-auth sources (Last.fm, Deezer, iTunes) run
+// concurrently for every seed; their results are merged into the
+// candidate pool with Last.fm similars weighted at 1.0 and everything
+// else at 0.4. Deezer is DNS-sinkholed on some networks, so every
 // cross-source call is best-effort: a failure returns [] and must
 // never abort the generation run. No Spotify (Premium-gated) and no
 // YouTube Music youtubei "related" calls (reverse-engineered) here.
@@ -10,6 +11,8 @@
 // shared dioProvider retries GETs up to 5x, which would turn a
 // sinkholed Deezer host into a long backoff per failed seed instead
 // of a fast fail-over to iTunes.
+
+import 'dart:async';
 
 import 'package:dio/dio.dart';
 
@@ -69,6 +72,8 @@ List<SimilarTrack> parseDeezerTracks(Map<String, dynamic> json) {
 }
 
 /// Tracks from an iTunes Search API response (results: trackName/artistName).
+// iTunes also returns previewUrl per track; callers extract it via
+// [parseITunesTrackPreview].
 List<SimilarTrack> parseITunesTracks(Map<String, dynamic> json) {
   final tracks = <SimilarTrack>[];
   for (final item in _asMapList(json['results'])) {
@@ -80,8 +85,15 @@ List<SimilarTrack> parseITunesTracks(Map<String, dynamic> json) {
   return tracks;
 }
 
+/// Preview URL from a single iTunes result item, or null.
+String? parseITunesPreviewUrl(dynamic item) {
+  if (item is! Map) return null;
+  final url = (item['previewUrl'] as String?)?.trim();
+  return (url != null && url.isNotEmpty) ? url : null;
+}
+
 /// Best-effort Deezer + iTunes clients. Every method returns [] on any
-/// failure (including Deezer's home-network connection refusal).
+// failure (including Deezer's home-network connection refusal).
 class FallbackSources {
   final Dio _dio;
 
@@ -120,7 +132,10 @@ class FallbackSources {
     return parseDeezerTracks(_asMap(res.data));
   }
 
-  Future<List<SimilarTrack>> itunesArtistTracks(String artist) async {
+  /// iTunes artist search; returns tracks plus a parallel map of
+  /// normalized track key -> previewUrl.
+  Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
+      itunesArtistTracksWithPreviews(String artist) async {
     try {
       final res = await _dio.get(
         'https://itunes.apple.com/search',
@@ -132,36 +147,103 @@ class FallbackSources {
           'limit': 10,
         },
       );
-      return parseITunesTracks(_asMap(res.data));
+      final data = _asMap(res.data);
+      final results = _asMapList(data['results']);
+      final tracks = <SimilarTrack>[];
+      final previews = <String, String>{};
+      for (final item in results) {
+        final artistName = (item['artistName'] as String?)?.trim() ?? '';
+        final title = (item['trackName'] as String?)?.trim() ?? '';
+        if (artistName.isEmpty || title.isEmpty) continue;
+        tracks.add(SimilarTrack(artist: artistName, title: title, match: 0));
+        final preview = parseITunesPreviewUrl(item);
+        if (preview != null) {
+          final key = '${artistName.toLowerCase().trim()} - ${title.toLowerCase().trim()}';
+          previews[key] = preview;
+        }
+      }
+      return (tracks: tracks, previews: previews);
     } catch (_) {
-      return const [];
+      return (tracks: const <SimilarTrack>[], previews: const <String, String>{});
+    }
+  }
+
+  /// Backwards-compatible wrapper: iTunes tracks only (no previews).
+  Future<List<SimilarTrack>> itunesArtistTracks(String artist) async {
+    final r = await itunesArtistTracksWithPreviews(artist);
+    return r.tracks;
+  }
+
+  /// Look up a single track's preview URL on iTunes by artist + title.
+  /// Returns the preview URL (30-second sample) or null when not found.
+  Future<String?> itunesTrackPreview(String artist, String title) async {
+    try {
+      final res = await _dio.get(
+        'https://itunes.apple.com/search',
+        queryParameters: {
+          'term': '$artist $title',
+          'media': 'music',
+          'entity': 'song',
+          'limit': 5,
+        },
+      );
+      final results = _asMapList(_asMap(res.data)['results']);
+      for (final item in results) {
+        final itemArtist = (item['artistName'] as String?)?.trim() ?? '';
+        final itemTitle = (item['trackName'] as String?)?.trim() ?? '';
+        if (itemArtist.isEmpty || itemTitle.isEmpty) continue;
+        // Prefer an exact-ish match on title.
+        if (itemTitle.toLowerCase() == title.toLowerCase().trim() &&
+            itemArtist.toLowerCase().contains(artist.toLowerCase().trim().split(' ').first)) {
+          final preview = parseITunesPreviewUrl(item);
+          if (preview != null) return preview;
+        }
+      }
+      // Fall back to the first result's preview URL.
+      if (results.isNotEmpty) {
+        final preview = parseITunesPreviewUrl(results.first);
+        if (preview != null) return preview;
+      }
+      return null;
+    } catch (_) {
+      return null;
     }
   }
 }
 
-/// Result of resolving one seed. [fallbackReason] is null for a true
-/// track.getSimilar hit; otherwise it names the fallback source, e.g.
-/// "More from <artist>", "From Deezer", "From iTunes".
+/// Result of resolving one seed. [similars] are Last.fm track.getSimilar
+/// hits (weight 1.0). [fallbacks] are Deezer + iTunes + Last.fm
+/// artist-top tracks (weight 0.4). Both lists are merged by the caller.
 class SeedSimilarResult {
-  final List<SimilarTrack> tracks;
+  final List<SimilarTrack> similars;
+  final List<SimilarTrack> fallbacks;
   final String? fallbackReason;
+  /// iTunes preview URLs keyed by normalized "artist - title" track key
+  /// (only when the fallback came from iTunes).
+  final Map<String, String> fallbackPreviews;
 
-  const SeedSimilarResult(this.tracks, [this.fallbackReason]);
+  const SeedSimilarResult({
+    this.similars = const [],
+    this.fallbacks = const [],
+    this.fallbackReason,
+    this.fallbackPreviews = const {},
+  });
 
-  bool get isFallback => fallbackReason != null;
+  bool get hasSimilars => similars.isNotEmpty;
+  bool get hasFallbacks => fallbacks.isNotEmpty;
+  bool get isEmpty => similars.isEmpty && fallbacks.isEmpty;
 }
 
-/// Resolve similar tracks for one seed, in fallback order. Only a
-/// Last.fm error 6 is treated as "not found" and stepped over; any
-/// other LastFmException (or a transport error) is rethrown so the
-/// caller still aborts the run on network / key / rate-limit errors,
-/// exactly as before. Cross-source failures are swallowed here too
-/// (in addition to FallbackSources itself) so they can never abort.
+/// Resolve similar tracks for one seed, running all no-auth sources
+/// concurrently. Only a Last.fm error 6 is treated as "not found" and
+/// stepped over; any other LastFmException (or a transport error) is
+/// rethrown so the caller still aborts the run on network / key /
+/// rate-limit errors. Cross-source failures are swallowed so they can
+/// never abort.
 ///
-/// Call caps per failed seed: 1 cleaned retry, 1 artist-top call,
-/// 1 similar-artists call + up to 2 similar-artist top calls, then
-/// Deezer (search + top, + up to 2 related tops) and 1 iTunes search.
-/// A seed whose artist exists usually stops at the artist-top call.
+/// Deezer and iTunes always run alongside Last.fm — they are not a
+/// fallback-of-last-resort anymore. Their results are merged into
+/// [fallbacks] with a shared [fallbackReason].
 Future<SeedSimilarResult> resolveSeedSimilars({
   required String artist,
   required String title,
@@ -172,8 +254,8 @@ Future<SeedSimilarResult> resolveSeedSimilars({
   required Future<List<String>> Function(String artist) getSimilarArtists,
   required Future<List<SimilarTrack>> Function(String artist)
       deezerArtistTracks,
-  required Future<List<SimilarTrack>> Function(String artist)
-      itunesArtistTracks,
+  required Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
+      Function(String artist) itunesArtistTracksWithPreviews,
 }) async {
   Future<List<SimilarTrack>?> trySimilar(String t) async {
     try {
@@ -208,38 +290,89 @@ Future<SeedSimilarResult> resolveSeedSimilars({
             SimilarTrack(artist: t.artist, title: t.title, match: 0),
       ];
 
-  var sims = await trySimilar(title);
-  if (sims != null && sims.isNotEmpty) return SeedSimilarResult(sims);
-  final cleaned = RecommendationEngine.cleanTrackTitle(title);
-  if (cleaned != title) {
-    sims = await trySimilar(cleaned);
-    if (sims != null && sims.isNotEmpty) return SeedSimilarResult(sims);
+  // --- Always-run sources (concurrent with Last.fm primary).
+  // Safe wrappers catch errors inside the async function so the returned
+  // Future never completes with an error — Deezer/iTunes can never abort.
+  Future<List<SimilarTrack>> safeDeezer() async {
+    try {
+      return await deezerArtistTracks(artist);
+    } catch (_) {
+      return const [];
+    }
   }
 
+  Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
+      safeItunes() async {
+    try {
+      return await itunesArtistTracksWithPreviews(artist);
+    } catch (_) {
+      return (tracks: const <SimilarTrack>[], previews: const <String, String>{});
+    }
+  }
+
+  final deezerFuture = safeDeezer();
+  final itunesFuture = safeItunes();
+
+  // --- Primary: Last.fm track.getSimilar + cleaned-title retry ---
+  var sims = await trySimilar(title);
+  if (sims == null || sims.isEmpty) {
+    final cleaned = RecommendationEngine.cleanTrackTitle(title);
+    if (cleaned != title) {
+      sims = await trySimilar(cleaned);
+    }
+  }
+
+  // Await the always-run sources (errors already swallowed).
+  final deezer = await deezerFuture;
+  final itunesResult = await itunesFuture;
+  final alwaysFallbacks = <SimilarTrack>[];
+  alwaysFallbacks.addAll(deezer);
+  alwaysFallbacks.addAll(itunesResult.tracks);
+
+  if (sims != null && sims.isNotEmpty) {
+    // Last.fm similars are primary; Deezer/iTunes join as fallbacks.
+    return SeedSimilarResult(
+      similars: sims,
+      fallbacks: alwaysFallbacks,
+      fallbackReason:
+          alwaysFallbacks.isNotEmpty ? 'More from $artist' : null,
+      fallbackPreviews: itunesResult.previews,
+    );
+  }
+
+  // --- Last.fm didn't know this track: try artist-top chains ---
   var top = await tryArtistTop(artist, 8);
   if (top.isNotEmpty) {
-    return SeedSimilarResult(toSimilars(top), 'More from $artist');
+    return SeedSimilarResult(
+      similars: const [],
+      fallbacks: [...toSimilars(top), ...alwaysFallbacks],
+      fallbackReason: 'More from $artist',
+      fallbackPreviews: itunesResult.previews,
+    );
   }
+
   final similars = await trySimilarArtists(artist);
   for (final similar in similars.take(2)) {
     top = await tryArtistTop(similar, 5);
     if (top.isNotEmpty) {
-      return SeedSimilarResult(toSimilars(top), 'More from $similar');
+      return SeedSimilarResult(
+        similars: const [],
+        fallbacks: [...toSimilars(top), ...alwaysFallbacks],
+        fallbackReason: 'More from $similar',
+        fallbackPreviews: itunesResult.previews,
+      );
     }
   }
 
-  List<SimilarTrack> cross;
-  try {
-    cross = await deezerArtistTracks(artist);
-  } catch (_) {
-    cross = const [];
+  // --- Deezer + iTunes already fetched above as always-run sources ---
+  if (alwaysFallbacks.isNotEmpty) {
+    return SeedSimilarResult(
+      similars: const [],
+      fallbacks: alwaysFallbacks,
+      fallbackReason: 'More from $artist',
+      fallbackPreviews: itunesResult.previews,
+    );
   }
-  if (cross.isNotEmpty) return SeedSimilarResult(cross, 'From Deezer');
-  try {
-    cross = await itunesArtistTracks(artist);
-  } catch (_) {
-    cross = const [];
-  }
-  if (cross.isNotEmpty) return SeedSimilarResult(cross, 'From iTunes');
-  return const SeedSimilarResult([]);
+
+  return const SeedSimilarResult();
 }

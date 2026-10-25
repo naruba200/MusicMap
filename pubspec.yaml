@@ -33,6 +33,8 @@ dependencies:
   path_provider: ^2.1.2
   # Pure-Dart RSS/Atom parsing (M4 news)
   xml: ^6.5.0
+  # 30-second preview playback (no OAuth needed)
+  audioplayers: ^6.0.0
 
 dev_dependencies:
   flutter_test:

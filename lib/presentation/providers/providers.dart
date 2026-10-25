@@ -20,6 +20,7 @@ import '../../data/repositories/favorites_repository.dart';
 import '../../data/repositories/history_repository.dart';
 import '../../data/repositories/playlist_repository.dart';
 import '../../data/repositories/settings_repository.dart';
+import '../../data/fallback/fallback_sources.dart';
 import '../screens/playlist_detail_screen.dart';
 
 /// Global navigator key so deep links can push routes from providers.
@@ -34,6 +35,13 @@ final dioProvider = Provider<Dio>((ref) {
   final dio = Dio();
   dio.interceptors.add(ConnectionRetryInterceptor(dio));
   return dio;
+});
+
+/// Fallback sources (Deezer + iTunes) for cross-source seed expansion
+/// and on-demand preview lookup. Uses a plain Dio without retries so
+/// sinkholed hosts fail fast.
+final fallbackSourcesProvider = Provider<FallbackSources>((ref) {
+  return FallbackSources();
 });
 
 final tokenStoreProvider = Provider<TokenStore>((ref) => TokenStore());

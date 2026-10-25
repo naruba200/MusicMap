@@ -9,6 +9,7 @@ class Track {
   final String? imageUrl;
   final int? durationMs;
   final String? platformTrackId;
+  final String? previewUrl; // 30-second preview (iTunes), nullable
 
   const Track({
     required this.title,
@@ -17,6 +18,7 @@ class Track {
     this.imageUrl,
     this.durationMs,
     this.platformTrackId,
+    this.previewUrl,
   });
 
   Map<String, dynamic> toJson() => {
@@ -26,6 +28,7 @@ class Track {
         if (imageUrl != null) 'imageUrl': imageUrl,
         if (durationMs != null) 'durationMs': durationMs,
         if (platformTrackId != null) 'platformTrackId': platformTrackId,
+        if (previewUrl != null) 'previewUrl': previewUrl,
       };
 
   factory Track.fromJson(Map<String, dynamic> json) => Track(
@@ -35,6 +38,7 @@ class Track {
         imageUrl: json['imageUrl'] as String?,
         durationMs: (json['durationMs'] as num?)?.toInt(),
         platformTrackId: json['platformTrackId'] as String?,
+        previewUrl: json['previewUrl'] as String?,
       );
 }
 

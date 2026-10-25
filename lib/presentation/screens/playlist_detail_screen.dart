@@ -39,6 +39,7 @@ class _PlaylistDetailScreenState
   String? _lastGenre;
   bool _initialized = false;
   bool _rescanning = false;
+  bool _retrying = false;
 
   String get _detailKey => '${widget.platformId}::${widget.playlistId}';
 
@@ -164,11 +165,22 @@ class _PlaylistDetailScreenState
               ),
             ],
             const SizedBox(height: 16),
-            FilledButton.tonal(
-              onPressed: () =>
-                  ref.invalidate(playlistDetailProvider(_detailKey)),
-              child: const Text('Retry'),
-            ),
+            if (_retrying) ...[
+              const SizedBox(
+                height: 56,
+                child: Center(child: CircularProgressIndicator(strokeWidth: 3)),
+              ),
+              const SizedBox(height: 8),
+              Text('Retrying…', style: Theme.of(context).textTheme.bodySmall),
+            ] else
+              FilledButton.tonal(
+                onPressed: () async {
+                  setState(() => _retrying = true);
+                  ref.invalidate(playlistDetailProvider(_detailKey));
+                  if (mounted) setState(() => _retrying = false);
+                },
+                child: const Text('Retry'),
+              ),
             TextButton(
               onPressed: () => platform.openPlaylist(widget.playlistId),
               child: Text('Open in ${platform.displayName} instead'),
