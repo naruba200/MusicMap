@@ -205,4 +205,5 @@ String _stripHtml(String html) => html
     .replaceAll(RegExp(r'\s+'), ' ')
     // Tags replaced by spaces leave a space before punctuation
     // ("road</b>." -> "road ."); drop it.
-    .replaceAll(RegExp(r'\s+([.,;:!?])'), r'$1');
+    .replaceAllMapped(
+        RegExp(r'\s+([.,;:!?])'), (m) => m.group(1)!);
