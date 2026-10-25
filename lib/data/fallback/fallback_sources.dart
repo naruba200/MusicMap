@@ -158,7 +158,11 @@ class FallbackSources {
         tracks.add(SimilarTrack(artist: artistName, title: title, match: 0));
         final preview = parseITunesPreviewUrl(item);
         if (preview != null) {
-          final key = '${artistName.toLowerCase().trim()} - ${title.toLowerCase().trim()}';
+          // Same normalization generation uses to look previews up
+          // (see generation_provider.dart): a raw lowercased string
+          // misses keys with remaster/version suffixes.
+          final key =
+              RecommendationEngine.normalizeKey(artistName, title);
           previews[key] = preview;
         }
       }

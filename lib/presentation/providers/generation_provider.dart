@@ -699,15 +699,25 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
 /// Manages 30-second preview playback for recommended tracks.
 /// One shared player across the app; only one preview plays at a time.
 /// Resolves missing preview URLs on demand via iTunes search.
-class AudioPlayerNotifier extends StateNotifier<AsyncValue<Object?>> {
-  final AudioPlayer _player = AudioPlayer();
+///
+/// The state carries the playing track key so buttons can watch it:
+/// [AsyncLoading] while a preview URL is being resolved, `data(key)`
+/// while that track plays, and `data(null)` when stopped or paused.
+/// The key of the track currently being resolved is exposed via
+/// [resolvingKey] so a button can show a spinner for its own track
+/// while the state is loading.
+class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
+  final AudioPlayer _player;
   final FallbackSources _fallbacks;
   String? _playingKey;
+  String? _resolvingKey;
   StreamSubscription<PlayerState>? _stateSub;
   /// Cache of resolved preview URLs keyed by normalized track key.
   final Map<String, String> _previewCache = {};
 
-  AudioPlayerNotifier(this._fallbacks) : super(const AsyncValue.data(null)) {
+  AudioPlayerNotifier(this._fallbacks, [AudioPlayer? player])
+      : _player = player ?? AudioPlayer(),
+        super(const AsyncValue.data(null)) {
     _stateSub = _player.onPlayerStateChanged.listen((playerState) {
       if (playerState == PlayerState.completed && _playingKey != null) {
         _playingKey = null;
@@ -716,17 +726,24 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<Object?>> {
     });
   }
 
-  /// Normalized key for a track: "artist - title".
+  /// Normalized key for a track, using the same function generation
+  /// uses to look preview URLs up, so keys built anywhere in the
+  /// fallback layer match the keys used here.
   String _key(Track track) =>
-      '${track.artist.toLowerCase().trim()} - ${track.title.toLowerCase().trim()}';
+      RecommendationEngine.normalizeKey(track.artist, track.title);
 
   bool get isPlaying => _playingKey != null;
 
   String? get playingKey => _playingKey;
 
+  /// Normalized key of the track whose preview is being resolved, if
+  /// any. Only meaningful while [state] is [AsyncLoading].
+  String? get resolvingKey => _resolvingKey;
+
   /// Resolve a preview URL for [track] from cache, the track itself, or
-  /// an on-demand iTunes search.
-  Future<String?> _resolvePreview(Track track) async {
+  /// an on-demand iTunes search. Public so the on-demand path is
+  /// testable without driving audio playback.
+  Future<String?> resolvePreview(Track track) async {
     final key = _key(track);
     // Already cached.
     final cached = _previewCache[key];
@@ -745,26 +762,40 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<Object?>> {
   }
 
   Future<void> play(Track track) async {
-    final preview = await _resolvePreview(track);
-    if (preview == null || preview.isEmpty) return;
     final key = _key(track);
     if (_playingKey == key) {
-      // Toggle: pause if already playing this track.
+      // Toggle: pause if already playing this track. No resolve needed.
       await _player.pause();
       _playingKey = null;
       state = const AsyncValue.data(null);
+      return;
+    }
+    // Resolve first (loading state), so a tap on a preview-less track
+    // actually runs the on-demand lookup instead of doing nothing.
+    _resolvingKey = key;
+    state = const AsyncLoading();
+    final preview = await resolvePreview(track);
+    // A newer tap superseded this resolve; its own state update wins.
+    if (_resolvingKey != key) return;
+    _resolvingKey = null;
+    if (preview == null || preview.isEmpty) {
+      // No preview anywhere: restore the previous playing state
+      // (still playing another track, or stopped) instead of
+      // leaving a stale loading state behind.
+      state = AsyncValue.data(_playingKey);
       return;
     }
     // Stop any other track, then play this one.
     await _player.stop();
     await _player.play(UrlSource(preview));
     _playingKey = key;
-    state = const AsyncValue.data(null);
+    state = AsyncValue.data(key);
   }
 
   Future<void> pause() async {
     await _player.pause();
     _playingKey = null;
+    _resolvingKey = null;
     state = const AsyncValue.data(null);
   }
 
@@ -778,6 +809,6 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<Object?>> {
 
 /// Shared audio player provider for preview playback.
 final audioPlayerProvider =
-    StateNotifierProvider<AudioPlayerNotifier, AsyncValue<Object?>>(
+    StateNotifierProvider<AudioPlayerNotifier, AsyncValue<String?>>(
   (ref) => AudioPlayerNotifier(ref.watch(fallbackSourcesProvider)),
 );
