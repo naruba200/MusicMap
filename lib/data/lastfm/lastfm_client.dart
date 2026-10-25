@@ -9,7 +9,24 @@ import 'package:dio/dio.dart';
 
 class LastFmException implements Exception {
   final String message;
-  const LastFmException(this.message);
+
+  /// Last.fm API error code (e.g. 6 = "Track not found"), or null for
+  /// transport/unreachable errors that carry no API payload.
+  final int? code;
+
+  const LastFmException(this.message, {this.code});
+
+  /// True only for API error 6 ("Track not found"). Callers must use
+  /// this — never string-matching — to decide whether a single seed
+  /// may be skipped; every other error still aborts the run.
+  bool get isTrackNotFound => code == 6;
+
+  factory LastFmException.fromApi(dynamic error, dynamic message) =>
+      LastFmException(
+        'Last.fm error $error: ${message ?? 'unknown'}',
+        code: int.tryParse('$error'),
+      );
+
   @override
   String toString() => message;
 }
@@ -150,8 +167,7 @@ class LastFmClient {
         );
         final data = res.data as Map<String, dynamic>;
         if (data.containsKey('error')) {
-          throw LastFmException(
-              'Last.fm error ${data['error']}: ${data['message'] ?? 'unknown'}');
+          throw LastFmException.fromApi(data['error'], data['message']);
         }
         _consecutiveFailures = 0;
         return data;
@@ -231,6 +247,24 @@ class LastFmClient {
     return _asList(albums).map(TagAlbum.fromJson).toList();
   }
 
+  /// Artists similar to [artist] (artist.getSimilar) — fallback source
+  /// when a seed track itself is not found on Last.fm: the similar
+  /// artists' own top tracks can still seed recommendations.
+  Future<List<String>> getSimilarArtists(String artist,
+      {int limit = 5}) async {
+    final data = await _get('artist.getSimilar', {
+      'artist': artist,
+      'autocorrect': '1',
+      'limit': '$limit',
+    });
+    final artists = (data['similarartists'] as Map?)?['artist'];
+    return _asList(artists)
+        .map((a) => (a['name'] as String?)?.trim())
+        .whereType<String>()
+        .where((n) => n.isNotEmpty)
+        .toList();
+  }
+
   /// Tags similar to [tag] — related-genre chips (FR-04e).
   Future<List<String>> getSimilarTags(String tag) async {
     final data = await _get('tag.getSimilar', {'tag': tag});
@@ -259,3 +293,4 @@ class LastFmClient {
     return TrackAlbumInfo.fromJson(data);
   }
 }
+

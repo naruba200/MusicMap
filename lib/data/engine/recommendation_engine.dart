@@ -112,6 +112,30 @@ class RecommendationEngine {
     return artist.trim();
   }
 
+  /// Clean a track title for a Last.fm retry: strip parenthetical
+  /// (...) and bracket [...] segments, trailing feat./ft./featuring
+  /// credits, and trailing version tags ("- TV Size", "- Short ver.").
+  /// The base title is never mangled: "Bohemian Rhapsody" comes back
+  /// unchanged, and an empty result falls back to the original title.
+  static String cleanTrackTitle(String title) {
+    var t = title.trim();
+    t = t.replaceAll(RegExp(r'\s*\([^)]*\)'), '');
+    t = t.replaceAll(RegExp(r'\s*\[[^\]]*\]'), '');
+    t = t.replaceAll(
+        RegExp(r'\s+(feat\.?|ft\.?|featuring)\s+.*\$',
+            caseSensitive: false),
+        '');
+    t = t.replaceAll(
+        RegExp(
+            r'\s*[-–—]\s*(tv\s*-?\s*size|short\s+ver\.?|'
+            r'short\s+version|radio\s+edit)\s*\$',
+            caseSensitive: false),
+        '');
+    t = t.replaceAll(RegExp(r'\s*[-–—]\s*\$'), '');
+    t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return t.isEmpty ? title.trim() : t;
+  }
+
   /// Seed selection (FR-05): drop unusable, dedupe, sample evenly, S formula.
   static SeedSelection selectSeeds(List<Track> tracks) {
     final seen = <String>{};
@@ -145,6 +169,13 @@ class RecommendationEngine {
   static List<ScoredTrack> scoreCandidates({
     required List<Track> seeds,
     required Map<int, List<SimilarTrack>> similarBySeed,
+    // Fallback tracks (artist / cross-source, see resolveSeedSimilars):
+    // scored at [fallbackWeight] of a true similar-track hit, with a
+    // reason naming the fallback source — never "Similar to <seed>".
+    // Empty by default, so existing callers are unchanged.
+    Map<int, List<SimilarTrack>> fallbackBySeed = const {},
+    Map<int, String> fallbackReasonBySeed = const {},
+    double fallbackWeight = 0.4,
   }) {
     final seedKeys = {
       for (final s in seeds) normalizeKey(s.artist, s.title)
@@ -165,6 +196,23 @@ class RecommendationEngine {
         tracks.putIfAbsent(
             key, () => Track(title: sim.title, artist: sim.artist));
         (contributions[key] ??= []).add(MapEntry(seedTitle, w));
+      }
+    });
+
+    fallbackBySeed.forEach((seedIndex, fallbacks) {
+      if (seedIndex < 0 || seedIndex >= seeds.length) return;
+      final reason = fallbackReasonBySeed[seedIndex] ??
+          'More from ${seeds[seedIndex].artist}';
+      for (var rank = 0; rank < fallbacks.length; rank++) {
+        final sim = fallbacks[rank];
+        if (sim.artist.trim().isEmpty || sim.title.trim().isEmpty) continue;
+        final key = normalizeKey(sim.artist, sim.title);
+        if (seedKeys.contains(key)) continue; // never recommend a seed
+        final w = fallbackWeight / (1 + rank);
+        scores[key] = (scores[key] ?? 0) + w;
+        tracks.putIfAbsent(
+            key, () => Track(title: sim.title, artist: sim.artist));
+        (contributions[key] ??= []).add(MapEntry(reason, w));
       }
     });
 
@@ -514,3 +562,4 @@ class RecommendationEngine {
     return recs.take(count).toList();
   }
 }
+
