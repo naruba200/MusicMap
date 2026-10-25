@@ -14,7 +14,7 @@ const String soundCloudClientId = 'YOUR_SOUNDCLOUD_CLIENT_ID';
 
 /// Last.fm API key (https://www.last.fm/api/account/create). Used by the
 /// recommendation engine in M2.
-const String lastFmApiKey = 'YOUR_LASTFM_API_KEY';
+const String lastFmApiKey = 'afe16fee1f96d0177b7d691f4b7bc89c';
 
 /// Supported platform IDs.
 class PlatformIds {
