@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
 import '../../data/engine/recommendation_engine.dart';
+import '../../data/fallback/fallback_sources.dart';
 import '../../data/lastfm/lastfm_client.dart';
 import '../../data/models/music_models.dart';
 import '../../data/repositories/history_repository.dart';
@@ -152,6 +153,11 @@ String _displayTag(String tag) =>
 class GenerationNotifier extends StateNotifier<GenerationState> {
   final Dio _dio;
   final HistoryRepository _history;
+
+  /// Cross-source fallbacks use their own plain Dio (see
+  /// FallbackSources): a sinkholed Deezer host must fail fast instead
+  /// of burning the shared Dio's retries per failed seed.
+  late final FallbackSources _fallbacks = FallbackSources();
   bool _cancelled = false;
 
   GenerationNotifier(this._dio, this._history) : super(GenerationState.idle);
@@ -203,29 +209,49 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         );
       }
 
-      // 1. Similar tracks per seed (FR-06).
+      // 1. Similar tracks per seed (FR-06), with the error-6
+      // fallback chain (see resolveSeedSimilars): a single track
+      // that Last.fm does not know no longer kills the run — it is
+      // skipped (or replaced by an artist / cross-source fallback)
+      // and the other seeds carry on. Only a non-6 error (network,
+      // key, rate limit) still aborts, via resolveSeedSimilars'
+      // rethrow, caught by the outer LastFmException handler.
       final similarBySeed = <int, List<SimilarTrack>>{};
+      final fallbackBySeed = <int, List<SimilarTrack>>{};
+      final fallbackReasonBySeed = <int, String>{};
       var skipped = 0;
       for (var i = 0; i < selection.seeds.length; i++) {
         if (_cancelled) return _abort();
         _setProgress('Finding similar tracks', i, selection.seeds.length);
         final seed = selection.seeds[i];
-        final sims = await _lfm.getSimilarTracks(
-          RecommendationEngine.primaryArtist(seed.artist),
-          seed.title,
+        final resolved = await resolveSeedSimilars(
+          artist: RecommendationEngine.primaryArtist(seed.artist),
+          title: seed.title,
+          getSimilar: (a, t) => _lfm.getSimilarTracks(a, t),
+          getArtistTopTracks: (a, limit) =>
+              _lfm.getArtistTopTracks(a, limit: limit),
+          getSimilarArtists: (a) => _lfm.getSimilarArtists(a),
+          deezerArtistTracks: _fallbacks.deezerArtistTracks,
+          itunesArtistTracks: _fallbacks.itunesArtistTracks,
         );
-        if (sims.isEmpty) {
+        if (resolved.tracks.isEmpty) {
           skipped++;
+        } else if (resolved.isFallback) {
+          fallbackBySeed[i] = resolved.tracks;
+          fallbackReasonBySeed[i] = resolved.fallbackReason!;
         } else {
-          similarBySeed[i] = sims;
+          similarBySeed[i] = resolved.tracks;
         }
       }
       _setProgress('Finding similar tracks', selection.seeds.length,
           selection.seeds.length);
-      if (similarBySeed.isEmpty) {
-        throw const GenerationException(
+      if (similarBySeed.isEmpty && fallbackBySeed.isEmpty) {
+        throw GenerationException(
           'None of the seed tracks had similar-track data on Last.fm. '
-          'Try a larger or more mainstream playlist.',
+          '$skipped of ${selection.seeds.length} seeds were not found, '
+          'even after trying cleaned titles, artist fallbacks and other '
+          'sources. Try a larger or more mainstream playlist, or '
+          'Surprise Me with tags instead.',
           retryable: false,
         );
       }
@@ -233,6 +259,8 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       final scored = RecommendationEngine.scoreCandidates(
         seeds: selection.seeds,
         similarBySeed: similarBySeed,
+        fallbackBySeed: fallbackBySeed,
+        fallbackReasonBySeed: fallbackReasonBySeed,
       );
 
       // 2. Discovery modifiers (FR-07b, §30 seed mode): fetch each tag's
@@ -254,7 +282,12 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           if (_cancelled) return _abort();
           _setProgress('Expanding your tags', i, tagSelection.seeds.length);
           final seed = tagSelection.seeds[i];
-          final sims = await _lfm.getSimilarTracks(
+          // Tag seeds get the per-seed skip + cleaned-title retry
+          // only: the tag seed tracks themselves already head the
+          // pool, so a failed expansion just loses its similars,
+          // and the full cross-source chain is not worth the calls
+          // here. Non-6 errors still rethrow and abort.
+          final sims = await _similarOrCleaned(
             RecommendationEngine.primaryArtist(seed.artist),
             seed.title,
           );
@@ -414,6 +447,27 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
     }
   }
 
+  /// One track.getSimilar attempt plus, on error 6 or an empty
+  /// result, one cleaned-title retry. Returns [] when both miss.
+  /// Non-6 LastFmExceptions (and transport errors) are rethrown.
+  Future<List<SimilarTrack>> _similarOrCleaned(
+      String artist, String title) async {
+    try {
+      final sims = await _lfm.getSimilarTracks(artist, title);
+      if (sims.isNotEmpty) return sims;
+    } on LastFmException catch (e) {
+      if (!e.isTrackNotFound) rethrow;
+    }
+    final cleaned = RecommendationEngine.cleanTrackTitle(title);
+    if (cleaned == title) return const [];
+    try {
+      return await _lfm.getSimilarTracks(artist, cleaned);
+    } on LastFmException catch (e) {
+      if (!e.isTrackNotFound) rethrow;
+      return const [];
+    }
+  }
+
   List<String> _tagsFor(DiscoverySettings settings) => [
         for (final m in settings.moods) tagForLabel(m),
         for (final g in settings.genres) tagForLabel(g),
@@ -458,3 +512,4 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
     state = GenerationState.idle;
   }
 }
+
