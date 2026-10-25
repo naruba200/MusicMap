@@ -200,6 +200,9 @@ NewsArticle? _parseAtomEntry(
   );
 }
 
-String _stripHtml(String html) =>
-    html.replaceAll(RegExp(r'<[^>]*>'), ' ').replaceAll(
-        RegExp(r'\s+'), ' ');
+String _stripHtml(String html) => html
+    .replaceAll(RegExp(r'<[^>]*>'), ' ')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    // Tags replaced by spaces leave a space before punctuation
+    // ("road</b>." -> "road ."); drop it.
+    .replaceAll(RegExp(r'\s+([.,;:!?])'), r'$1');

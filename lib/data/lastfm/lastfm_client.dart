@@ -79,8 +79,11 @@ class TrackAlbumInfo {
   const TrackAlbumInfo({this.album, this.artist, this.imageUrl});
 
   factory TrackAlbumInfo.fromJson(Map<String, dynamic> json) {
-    final track = json['track'] as Map<String, dynamic>? ?? const {};
-    final album = track['album'] as Map<String, dynamic>?;
+    // Cast via Map? first: a constructed/decoded empty map can be
+    // Map<dynamic, dynamic>, which a direct Map<String, dynamic> cast rejects.
+    final track =
+        (json['track'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final album = (track['album'] as Map?)?.cast<String, dynamic>();
     return TrackAlbumInfo(
       album: album?['title'] as String?,
       artist: album?['artist'] as String?,

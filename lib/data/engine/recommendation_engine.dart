@@ -96,8 +96,8 @@ class RecommendationEngine {
         RegExp(r'\s+[\-\–\—]\s+(remaster(ed)?|remix|live|acoustic|demo|'
             r'version|edit|single version|radio edit)\b.*$'),
         '');
-    t = t.replaceAll(RegExp(r'\s*[\(\[].*?(remaster|remix|live|acoustic|demo|'
-        r'version|edit)[\)\]]\s*$'), '');
+    t = t.replaceAll(RegExp(r'\s*[\(\[][^\)\]]*?(remaster(ed)?|remix|live|'
+        r'acoustic|demo|version|edit)[^\)\]]*[\)\]]\s*$'), '');
     return '${artist.toLowerCase().trim()} - ${t.trim()}';
   }
 
