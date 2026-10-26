@@ -55,6 +55,8 @@ class ResultsScreen extends ConsumerWidget {
         body: Column(
           children: [
             _statsBar(theme),
+            if (result.sparseExplanation != null)
+              _sparseBanner(theme, result.sparseExplanation!),
             Expanded(
               child: TabBarView(
                 children: [
@@ -86,6 +88,35 @@ class ResultsScreen extends ConsumerWidget {
         parts.join(' • '),
         style: theme.textTheme.bodySmall
             ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+      ),
+    );
+  }
+
+  /// Sparse-result explanation (Phase 1): when the sources ran dry
+  /// and the list came up short, say why instead of silently showing
+  /// few songs. Existing dark Material 3 styling, no redesign.
+  Widget _sparseBanner(ThemeData theme, String message) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.info_outlined,
+                size: 18, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(message,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant)),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -53,6 +53,12 @@ class GenerationResult {
   final bool isSurprise;
   final int seedCount;
   final int skippedSeeds;
+  /// Set when the final song list is shorter than requested because
+  /// the sources ran dry (Phase 1 sparse generation). Null when the
+  /// list filled up, and always null for Surprise runs. Shown as an
+  /// explanation banner on the results screen instead of silently
+  /// showing few songs.
+  final String? sparseExplanation;
 
   const GenerationResult({
     required this.songs,
@@ -61,6 +67,7 @@ class GenerationResult {
     required this.isSurprise,
     required this.seedCount,
     required this.skippedSeeds,
+    this.sparseExplanation,
   });
 
   Map<String, dynamic> toJson() => {
@@ -70,6 +77,8 @@ class GenerationResult {
         'isSurprise': isSurprise,
         'seedCount': seedCount,
         'skippedSeeds': skippedSeeds,
+        if (sparseExplanation != null)
+          'sparseExplanation': sparseExplanation,
       };
 
   factory GenerationResult.fromJson(Map<String, dynamic> json) =>
@@ -86,6 +95,7 @@ class GenerationResult {
         isSurprise: json['isSurprise'] as bool? ?? false,
         seedCount: (json['seedCount'] as num?)?.toInt() ?? 0,
         skippedSeeds: (json['skippedSeeds'] as num?)?.toInt() ?? 0,
+        sparseExplanation: json['sparseExplanation'] as String?,
       );
 }
 
@@ -294,6 +304,8 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
               _fallbacks.deezerArtistTracksWithPreviews,
           itunesArtistTracksWithPreviews:
               _fallbacks.itunesArtistTracksWithPreviews,
+          // Title-only last resort (Phase 1 sparse generation).
+          searchTracksByTitle: (t) => _lfm.searchTracks(t),
         );
         if (resolved.isEmpty) {
           skipped++;
@@ -398,6 +410,84 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           final merged = <ScoredTrack>[];
           merged.addAll(scored);
           for (final e in expanded) {
+            final key = RecommendationEngine.normalizeKey(
+                e.track.artist, e.track.title);
+            if (!existingKeys.contains(key)) {
+              merged.add(e);
+              existingKeys.add(key);
+            }
+          }
+          merged.sort((a, b) => b.score.compareTo(a.score));
+          scored = merged;
+        }
+      }
+
+      // 1c. Similar-artist expansion (Phase 1 sparse generation): if
+      // the pool is STILL short after the seed-artist top-15
+      // expansion, add top tracks of Last.fm similar artists. This
+      // is the step that discovers new artists instead of more tracks
+      // by the same (possibly wrong) artist. Capped: at most 2
+      // similar artists per seed, 5 tracks each, 40 new tracks total;
+      // 0.4 weight via scoreCandidates fallbacks; one bad artist
+      // never kills the run.
+      if (scored.length < settings.songCount) {
+        if (_cancelled) return _abort();
+        _setProgress('Exploring similar artists', 0, selection.seeds.length);
+        final simExpBySeed = <int, List<SimilarTrack>>{};
+        final simExpReasons = <int, String>{};
+        var simAdded = 0;
+        const simCap = 40;
+        var simIdx = 0;
+        for (var i = 0; i < selection.seeds.length; i++) {
+          if (_cancelled) return _abort();
+          if (simAdded >= simCap) break;
+          final seed = selection.seeds[i];
+          final artist = RecommendationEngine.primaryArtist(seed.artist);
+          try {
+            final similars = await _lfm.getSimilarArtists(artist);
+            final sims = <SimilarTrack>[];
+            for (final similar in similars.take(2)) {
+              if (simAdded >= simCap) break;
+              try {
+                final topTracks =
+                    await _lfm.getArtistTopTracks(similar, limit: 5);
+                for (final t in topTracks) {
+                  sims.add(SimilarTrack(
+                    artist: t.artist,
+                    title: t.title,
+                    match: 0,
+                  ));
+                  simAdded++;
+                }
+              } catch (_) {
+                // one bad similar artist must not kill the run
+              }
+            }
+            if (sims.isNotEmpty) {
+              simExpBySeed[i] = sims;
+              simExpReasons[i] = 'Similar artists to $artist';
+            }
+          } catch (_) {
+            // one bad artist must not kill the run
+          }
+          _setProgress('Exploring similar artists', ++simIdx,
+              selection.seeds.length);
+        }
+        if (simExpBySeed.isNotEmpty) {
+          final simExpanded = RecommendationEngine.scoreCandidates(
+            seeds: selection.seeds,
+            similarBySeed: similarBySeed,
+            fallbackBySeed: simExpBySeed,
+            fallbackReasonBySeed: simExpReasons,
+          );
+          final existingKeys = {
+            for (final s in scored)
+              RecommendationEngine.normalizeKey(
+                  s.track.artist, s.track.title)
+          };
+          final merged = <ScoredTrack>[];
+          merged.addAll(scored);
+          for (final e in simExpanded) {
             final key = RecommendationEngine.normalizeKey(
                 e.track.artist, e.track.title);
             if (!existingKeys.contains(key)) {
@@ -547,6 +637,20 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
 
       final albums =
           RecommendationEngine.deriveAlbums(enriched, settings.albumCount);
+      // Sparse-result explanation (Phase 1): when the sources ran dry
+      // and the list came up short, say so instead of silently
+      // showing few songs.
+      String? sparseExplanation;
+      if (enriched.length < settings.songCount) {
+        final skippedPart = skipped > 0
+            ? '$skipped seed tracks were unknown to Last.fm, Deezer '
+                'and iTunes, so '
+            : '';
+        sparseExplanation =
+            'Only ${enriched.length} of ${settings.songCount} requested '
+            'songs could be found — ${skippedPart}the sources ran dry. '
+            'Try a larger or more mainstream playlist.';
+      }
       await _finishRun(
         result: GenerationResult(
           songs: enriched,
@@ -555,6 +659,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           isSurprise: false,
           seedCount: selection.seeds.length,
           skippedSeeds: skipped,
+          sparseExplanation: sparseExplanation,
         ),
         seedPlaylistId: seedPlaylistId,
         seedPlatformId: seedPlatformId,
