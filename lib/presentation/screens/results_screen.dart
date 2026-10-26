@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
 import '../../data/engine/recommendation_engine.dart';
+import '../../data/enrichment/enrichment_models.dart';
 import '../../data/lastfm/lastfm_client.dart';
 import '../../data/models/music_models.dart';
 import '../providers/generation_provider.dart';
@@ -132,7 +133,11 @@ class ResultsScreen extends ConsumerWidget {
       itemCount: result.songs.length,
       itemBuilder: (ctx, i) {
         final scored = result.songs[i];
-        return _SongRow(rank: i + 1, scored: scored);
+        final enrichment = result.enrichments[
+            RecommendationEngine.normalizeKey(
+                scored.track.artist, scored.track.title)];
+        return _SongRow(
+            rank: i + 1, scored: scored, enrichment: enrichment);
       },
     );
   }
@@ -180,7 +185,11 @@ class _SongRow extends StatelessWidget {
   final int rank;
   final ScoredTrack scored;
 
-  const _SongRow({required this.rank, required this.scored});
+  /// MusicBrainz annotation for this track, if any.
+  final TrackEnrichment? enrichment;
+
+  const _SongRow(
+      {required this.rank, required this.scored, this.enrichment});
 
   @override
   Widget build(BuildContext context) {
@@ -189,6 +198,16 @@ class _SongRow extends StatelessWidget {
     final reason = scored.reasons.length >= 2
         ? 'Because you liked ${scored.reasons[0]} and ${scored.reasons[1]}'
         : (scored.reasons.isNotEmpty ? scored.reasons.first : null);
+    // Honest MusicBrainz line; never presented as Last.fm data.
+    String? enrichmentLine;
+    final e = enrichment;
+    if (e != null && !e.isEmpty) {
+      if (e.tags.isNotEmpty) {
+        enrichmentLine = 'MusicBrainz: ${e.tags.take(3).join(', ')}';
+      } else if (e.releaseYear != null) {
+        enrichmentLine = 'MusicBrainz release: ${e.releaseYear}';
+      }
+    }
     return ListTile(
       leading: SizedBox(
         width: 32,
@@ -211,6 +230,12 @@ class _SongRow extends StatelessWidget {
                 style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.secondary,
                     fontStyle: FontStyle.italic)),
+          if (enrichmentLine != null)
+            Text(enrichmentLine,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant)),
         ],
       ),
       trailing: Row(

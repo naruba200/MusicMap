@@ -11,6 +11,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
 import '../../data/engine/recommendation_engine.dart';
+import '../../data/enrichment/enrichment_cache.dart';
+import '../../data/enrichment/enrichment_models.dart';
+import '../../data/enrichment/musicbrainz_client.dart';
 import '../../data/fallback/fallback_sources.dart';
 import '../../data/lastfm/lastfm_client.dart';
 import '../../data/models/music_models.dart';
@@ -59,6 +62,9 @@ class GenerationResult {
   /// explanation banner on the results screen instead of silently
   /// showing few songs.
   final String? sparseExplanation;
+  /// Post-score MusicBrainz annotations, keyed by normalized key.
+  /// Never affects scores or order.
+  final Map<String, TrackEnrichment> enrichments;
 
   const GenerationResult({
     required this.songs,
@@ -68,6 +74,7 @@ class GenerationResult {
     required this.seedCount,
     required this.skippedSeeds,
     this.sparseExplanation,
+    this.enrichments = const {},
   });
 
   Map<String, dynamic> toJson() => {
@@ -79,6 +86,10 @@ class GenerationResult {
         'skippedSeeds': skippedSeeds,
         if (sparseExplanation != null)
           'sparseExplanation': sparseExplanation,
+        if (enrichments.isNotEmpty)
+          'enrichments': {
+            for (final e in enrichments.entries) e.key: e.value.toJson()
+          },
       };
 
   factory GenerationResult.fromJson(Map<String, dynamic> json) =>
@@ -96,6 +107,12 @@ class GenerationResult {
         seedCount: (json['seedCount'] as num?)?.toInt() ?? 0,
         skippedSeeds: (json['skippedSeeds'] as num?)?.toInt() ?? 0,
         sparseExplanation: json['sparseExplanation'] as String?,
+        enrichments: ((json['enrichments'] as Map?) ?? {}).map(
+          (k, v) => MapEntry(
+              k.toString(),
+              TrackEnrichment.fromJson(
+                  (v as Map).cast<String, dynamic>())),
+        ),
       );
 }
 
@@ -172,6 +189,9 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   /// FallbackSources): a sinkholed Deezer host must fail fast instead
   /// of burning the shared Dio's retries per failed seed.
   late final FallbackSources _fallbacks = FallbackSources();
+
+  /// MusicBrainz enrichment: plain Dio, 1 req/s, never aborts.
+  late final MusicBrainzClient _musicBrainz = MusicBrainzClient();
   bool _cancelled = false;
 
   GenerationNotifier(this._dio, this._history, this._favorites)
@@ -637,6 +657,11 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
 
       final albums =
           RecommendationEngine.deriveAlbums(enriched, settings.albumCount);
+      // 6. MusicBrainz enrichment: AFTER scoring, top 10 only,
+      // cached 30 days, 1 req/s. Annotates only, never rescores.
+      if (_cancelled) return _abort();
+      final enrichments = await _enrichTopTracks(enriched);
+      if (_cancelled) return _abort();
       // Sparse-result explanation (Phase 1): when the sources ran dry
       // and the list came up short, say so instead of silently
       // showing few songs.
@@ -660,6 +685,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           seedCount: selection.seeds.length,
           skippedSeeds: skipped,
           sparseExplanation: sparseExplanation,
+          enrichments: enrichments,
         ),
         seedPlaylistId: seedPlaylistId,
         seedPlatformId: seedPlatformId,
@@ -716,6 +742,11 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         random: random,
       );
 
+      // MusicBrainz enrichment, as in the playlist path.
+      if (_cancelled) return _abort();
+      final enrichments = await _enrichTopTracks(songs);
+      if (_cancelled) return _abort();
+
       await _finishRun(
         result: GenerationResult(
           songs: songs,
@@ -724,6 +755,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           isSurprise: true,
           seedCount: 0,
           skippedSeeds: 0,
+          enrichments: enrichments,
         ),
         seedPlaylistId: null,
         seedPlatformId: null,
@@ -734,6 +766,28 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       state = GenerationState(error: e.message, canRetry: true);
     } catch (e) {
       state = GenerationState(error: 'Something went wrong: $e', canRetry: true);
+    }
+  }
+
+  /// Post-score MusicBrainz enrichment for a run's top songs.
+  /// Cache opens lazily; uncached on open failure. Any failure
+  /// returns an empty map — enrichment never fails a run.
+  Future<Map<String, TrackEnrichment>> _enrichTopTracks(
+      List<ScoredTrack> songs) async {
+    try {
+      _setProgress('Enriching top tracks (MusicBrainz)', 0, 1);
+      EnrichmentCache? cache;
+      try {
+        cache = await EnrichmentCache.open();
+      } catch (_) {
+        cache = null; // uncached enrichment is still better than none
+      }
+      final enrichments =
+          await MusicBrainzEnricher(_musicBrainz, cache).enrichTracks(songs);
+      _setProgress('Enriching top tracks (MusicBrainz)', 1, 1);
+      return enrichments;
+    } catch (_) {
+      return const {};
     }
   }
 
