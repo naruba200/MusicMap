@@ -112,6 +112,32 @@ void main() {
     });
   });
 
+  group('searchTracks (title-only)', () {
+    test('parses the track.search trackmatches envelope', () async {
+      final dio = Dio();
+      dio.httpClientAdapter = _CannedAdapter((method) {
+        if (method == 'track.search') {
+          return {
+            'results': {
+              'trackmatches': {
+                'track': [
+                  {'name': 'Glory Day', 'artist': 'Real Artist'},
+                  {'name': '', 'artist': 'Real Artist'},
+                ]
+              }
+            }
+          };
+        }
+        return <String, dynamic>{};
+      });
+      final client = LastFmClient(dio: dio, apiKey: 'test-key');
+      final tracks = await client.searchTracks('Glory Day');
+      expect(tracks.length, 1);
+      expect(tracks.single.title, 'Glory Day');
+      expect(tracks.single.artist, 'Real Artist');
+    });
+  });
+
   group('Deezer / iTunes parsing', () {
     test('parseDeezerArtistId takes the first id, null when missing', () {
       expect(
@@ -256,6 +282,7 @@ void main() {
               Function(String)? itunes,
       Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
               Function(String)? deezerWithPreviews,
+      Future<List<SimilarTrack>> Function(String)? searchByTitle,
     }) =>
         resolveSeedSimilars(
           artist: 'Obscure Artist',
@@ -271,6 +298,7 @@ void main() {
               (_) async =>
                   (tracks: const <SimilarTrack>[], previews: <String, String>{}),
           deezerArtistTracksWithPreviews: deezerWithPreviews,
+          searchTracksByTitle: searchByTitle,
         );
 
     test('a true similar hit wins and no fallback is called', () async {
@@ -374,6 +402,57 @@ void main() {
         ),
       );
       expect(result.fallbackPreviews[key], 'https://itunes.m4a');
+    });
+
+    test('bogus artist + real title still yields candidates via '
+        'title-only search', () async {
+      final result = await resolve(
+        searchByTitle: (_) async => [_s('Real Artist', 'Real Song')],
+      );
+      expect(result.isEmpty, isFalse);
+      expect(result.fallbacks.single.artist, 'Real Artist');
+      expect(result.fallbackReason, contains('Found by title'));
+    });
+
+    test('title-only search strips a duplicated artist prefix', () async {
+      final queries = <String>[];
+      final result = await resolveSeedSimilars(
+        artist: 'DJMax',
+        title: 'DJMax - Glory Day',
+        getSimilar: (_, __) async => throw const LastFmException(
+            'Last.fm error 6: Track not found',
+            code: 6),
+        getArtistTopTracks: (_, __) async => const [],
+        getSimilarArtists: (_) async => const [],
+        deezerArtistTracks: (_) async => const [],
+        itunesArtistTracksWithPreviews: (_) async =>
+            (tracks: const <SimilarTrack>[], previews: <String, String>{}),
+        searchTracksByTitle: (query) async {
+          queries.add(query);
+          if (query == 'Glory Day') {
+            return [_s('Real Artist', 'Glory Day')];
+          }
+          return const [];
+        },
+      );
+      expect(queries, contains('Glory Day'));
+      expect(result.fallbacks.single.title, 'Glory Day');
+      expect(result.fallbackReason, 'Found by title: "Glory Day"');
+    });
+
+    test('a fully unknown seed fails gracefully, never crashes', () async {
+      final result = await resolve(
+        searchByTitle: (_) async => const [],
+      );
+      expect(result.isEmpty, isTrue);
+    });
+
+    test('a throwing title search is swallowed like other fallbacks',
+        () async {
+      final result = await resolve(
+        searchByTitle: (_) async => throw Exception('network down'),
+      );
+      expect(result.isEmpty, isTrue);
     });
 
     test('a non-6 Last.fm error still aborts', () async {

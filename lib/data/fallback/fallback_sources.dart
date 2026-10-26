@@ -33,6 +33,29 @@ List<Map<String, dynamic>> _asMapList(dynamic value) {
   return const [];
 }
 
+/// Title candidates for a title-only search, in try order: the full
+/// title, the cleaned title, then the title with a duplicated artist
+/// prefix stripped ("DJMax - Glory Day" with artist "DJMax" → the
+/// search that can actually find the track is "Glory Day"). Each
+/// candidate is tried only if it differs from the earlier ones.
+List<String> _titleSearchCandidates(String artist, String title) {
+  final candidates = <String>[];
+  void add(String t) {
+    final v = t.trim();
+    if (v.isNotEmpty && !candidates.contains(v)) candidates.add(v);
+  }
+
+  add(title);
+  add(RecommendationEngine.cleanTrackTitle(title));
+  final prefix = RegExp(
+    '^${RegExp.escape(artist.trim())}\\s*[-–—:]\\s*',
+    caseSensitive: false,
+  );
+  final match = prefix.firstMatch(title.trim());
+  if (match != null) add(title.trim().substring(match.end));
+  return candidates;
+}
+
 String? _artistName(dynamic artist) {
   if (artist is Map) return (artist['name'] as String?)?.trim();
   if (artist is String) return artist.trim();
@@ -313,6 +336,9 @@ Future<SeedSimilarResult> resolveSeedSimilars({
   // previews join [SeedSimilarResult.fallbackPreviews].
   Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
       Function(String artist)? deezerArtistTracksWithPreviews,
+  // Optional title-only Last.fm search (track.search). Only used as
+  // a last resort, after every artist-scoped source has failed.
+  Future<List<SimilarTrack>> Function(String title)? searchTracksByTitle,
 }) async {
   Future<List<SimilarTrack>?> trySimilar(String t) async {
     try {
@@ -443,6 +469,31 @@ Future<SeedSimilarResult> resolveSeedSimilars({
       fallbackReason: 'More from $artist',
       fallbackPreviews: fallbackPreviews,
     );
+  }
+
+  // --- Title-only fallback: artist+title failed on Last.fm, Deezer
+  // and iTunes. Search by title alone (full, cleaned, then
+  // artist-prefix-stripped); the first candidate that returns matches
+  // wins. Hits are the track itself under its real artist, so they
+  // enter as 0.4-weight fallbacks with an honest reason. A search
+  // failure here is swallowed like every other fallback failure.
+  if (searchTracksByTitle != null) {
+    for (final candidate in _titleSearchCandidates(artist, title)) {
+      List<SimilarTrack> hits;
+      try {
+        hits = await searchTracksByTitle(candidate);
+      } catch (_) {
+        hits = const [];
+      }
+      if (hits.isNotEmpty) {
+        return SeedSimilarResult(
+          similars: const [],
+          fallbacks: hits.take(5).toList(),
+          fallbackReason: 'Found by title: "$candidate"',
+          fallbackPreviews: fallbackPreviews,
+        );
+      }
+    }
   }
 
   return const SeedSimilarResult();

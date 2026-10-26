@@ -202,6 +202,28 @@ class LastFmClient {
     return _asList(tracks).map(SimilarTrack.fromJson).toList();
   }
 
+  /// Title-only track search (Phase 1 sparse generation): finds a
+  /// track by its title when the credited artist is bogus or unknown
+  /// (e.g. a playlist whose titles all carry a channel/game prefix and
+  /// whose artist field is that prefix, not the real artist). Returns
+  /// matches in Last.fm rank order; callers cap how many they use.
+  /// Same failure rules as every other Last.fm call (error 6 and
+  /// transport errors surface to the caller's swallow-or-abort logic).
+  Future<List<SimilarTrack>> searchTracks(String title,
+      {int limit = 10}) async {
+    final data = await _get('track.search', {
+      'track': title,
+      'limit': '$limit',
+    });
+    final matches = (data['results'] as Map?)?['trackmatches'];
+    final tracks = (matches as Map?)?['track'];
+    return _asList(tracks)
+        .map(SimilarTrack.fromJson)
+        .where((t) =>
+            t.artist.trim().isNotEmpty && t.title.trim().isNotEmpty)
+        .toList();
+  }
+
   /// Top tracks for a discovery-modifier tag (FR-07b) or Surprise me (FR-19).
   Future<List<TagTrack>> getTagTopTracks(String tag, {int limit = 50}) async {
     final data = await _get('tag.getTopTracks', {
