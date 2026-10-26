@@ -1354,6 +1354,24 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
     state = AsyncValue.data(key);
   }
 
+  /// Play an already-resolved full-stream URL (a full-song race
+  /// winner), bypassing the toggle in [play]: a preview for the same
+  /// track key that is already playing must not swallow the full
+  /// song as a "pause". Records the URL/source in the preview cache
+  /// so the shared buttons show the playing state honestly.
+  Future<void> playStream(Track track, String url,
+      {String source = 'audius'}) async {
+    final key = _key(track);
+    _resolvingKey = null;
+    _ensureStateSub();
+    await _audioPlayer.stop();
+    await _audioPlayer.play(UrlSource(url));
+    _playingKey = key;
+    _previewCache[key] = url;
+    _previewSource[key] = source;
+    state = AsyncValue.data(key);
+  }
+
   Future<void> pause() async {
     await _player?.pause();
     _playingKey = null;
