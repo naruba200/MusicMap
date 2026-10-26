@@ -1200,8 +1200,8 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
   /// user-supplied client_id, and no shared key is shipped in the app.
   final Map<String, String> _previewSource = {};
 
-  AudioPlayerNotifier(this._fallbacks, [AudioPlayer? player],
-      {AudiusClient? audiusClient})
+  AudioPlayerNotifier(this._fallbacks,
+      {AudioPlayer? player, AudiusClient? audiusClient})
       : _player = player,
         _audiusClient = audiusClient,
         super(const AsyncValue.data(null));
