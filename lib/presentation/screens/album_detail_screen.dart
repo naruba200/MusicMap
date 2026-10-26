@@ -9,6 +9,7 @@ import '../../data/engine/recommendation_engine.dart';
 import '../../data/models/music_models.dart';
 import '../providers/generation_provider.dart';
 import '../widgets/favorite_button.dart';
+import '../widgets/preview_button.dart';
 import '../widgets/outbound_sheet.dart';
 
 class AlbumDetailScreen extends ConsumerWidget {
@@ -112,7 +113,7 @@ class AlbumDetailScreen extends ConsumerWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         FavoriteButton(track: track),
-                        _PreviewButton(track: track),
+                        PreviewButton(track: track),
                         IconButton(
                           icon: const Icon(Icons.open_in_new),
                           tooltip: 'Open in…',
@@ -131,45 +132,3 @@ class AlbumDetailScreen extends ConsumerWidget {
   }
 }
 
-/// Play/pause button for a 30-second track preview (iTunes preview URL).
-/// Uses a shared audio player so only one preview plays at a time.
-class _PreviewButton extends ConsumerWidget {
-  final Track track;
-
-  const _PreviewButton({required this.track});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // Watch the player state (not just read the notifier) so the icon
-    // rebuilds on play / pause / resolve transitions.
-    final playerState = ref.watch(audioPlayerProvider);
-    final player = ref.read(audioPlayerProvider.notifier);
-    // Same normalization as the player and the fallback layer, so the
-    // playing key matches even for remaster-suffixed titles.
-    final key =
-        RecommendationEngine.normalizeKey(track.artist, track.title);
-    final isPlaying = playerState.valueOrNull == key;
-    final isResolving =
-        playerState is AsyncLoading && player.resolvingKey == key;
-
-    // Always tappable: a tap on a preview-less track runs the on-demand
-    // iTunes lookup in AudioPlayerNotifier instead of doing nothing.
-    if (isResolving) {
-      return const Padding(
-        padding: EdgeInsets.all(14),
-        child: SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
-    }
-
-    return IconButton(
-      icon: Icon(isPlaying ? Icons.pause : Icons.play_circle_outline,
-          color: isPlaying ? Theme.of(context).colorScheme.primary : null),
-      tooltip: isPlaying ? 'Pause preview' : 'Play preview',
-      onPressed: () => player.play(track),
-    );
-  }
-}

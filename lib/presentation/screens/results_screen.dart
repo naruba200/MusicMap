@@ -15,6 +15,7 @@ import '../../data/models/music_models.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
 import '../widgets/favorite_button.dart';
+import '../widgets/preview_button.dart';
 import '../widgets/outbound_sheet.dart';
 import '../widgets/youtube_export_sheet.dart';
 import 'album_detail_screen.dart';
@@ -246,7 +247,7 @@ class _SongRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           FavoriteButton(track: track),
-          _PreviewButton(track: track),
+          PreviewButton(track: track),
           IconButton(
             icon: const Icon(Icons.lyrics_outlined),
             tooltip: 'Lyrics',
@@ -266,48 +267,6 @@ class _SongRow extends StatelessWidget {
   }
 }
 
-/// Play/pause button for a 30-second track preview (iTunes preview URL).
-/// Uses a shared audio player so only one preview plays at a time.
-class _PreviewButton extends ConsumerWidget {
-  final Track track;
-
-  const _PreviewButton({required this.track});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // Watch the player state (not just read the notifier) so the icon
-    // rebuilds on play / pause / resolve transitions.
-    final playerState = ref.watch(audioPlayerProvider);
-    final player = ref.read(audioPlayerProvider.notifier);
-    // Same normalization as the player and the fallback layer, so the
-    // playing key matches even for remaster-suffixed titles.
-    final key =
-        RecommendationEngine.normalizeKey(track.artist, track.title);
-    final isPlaying = playerState.valueOrNull == key;
-    final isResolving =
-        playerState is AsyncLoading && player.resolvingKey == key;
-
-    // Always tappable: a tap on a preview-less track runs the on-demand
-    // iTunes lookup in AudioPlayerNotifier instead of doing nothing.
-    if (isResolving) {
-      return const Padding(
-        padding: EdgeInsets.all(14),
-        child: SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
-    }
-
-    return IconButton(
-      icon: Icon(isPlaying ? Icons.pause : Icons.play_circle_outline,
-          color: isPlaying ? Theme.of(context).colorScheme.primary : null),
-      tooltip: isPlaying ? 'Pause preview' : 'Play preview',
-      onPressed: () => player.play(track),
-    );
-  }
-}
 
 /// Heart toggle persisted to the favorites repo (FR-12).
 class _AlbumCard extends ConsumerWidget {

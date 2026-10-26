@@ -11,6 +11,8 @@ import '../../data/models/music_models.dart';
 import '../../data/platforms/music_platform.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
+import '../widgets/favorite_button.dart';
+import '../widgets/preview_button.dart';
 import 'generating_screen.dart';
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
@@ -214,6 +216,13 @@ class _PlaylistDetailScreenState
               maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Text(t.artist,
               maxLines: 1, overflow: TextOverflow.ellipsis),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FavoriteButton(track: t),
+              PreviewButton(track: t),
+            ],
+          ),
         );
       },
     );

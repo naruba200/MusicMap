@@ -17,6 +17,7 @@ import '../../data/enrichment/theaudiodb_client.dart';
 import '../../data/enrichment/enrichment_cache.dart';
 import '../../data/enrichment/enrichment_models.dart';
 import '../../data/enrichment/musicbrainz_client.dart';
+import '../../data/discover/audius_client.dart';
 import '../../data/fallback/fallback_sources.dart';
 import '../../data/fallback/listenbrainz_client.dart';
 import '../../data/lastfm/lastfm_client.dart';
@@ -1048,14 +1049,23 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
 class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
   AudioPlayer? _player;
   final FallbackSources _fallbacks;
+  final AudiusClient? _audiusClient;
   String? _playingKey;
   String? _resolvingKey;
   StreamSubscription<PlayerState>? _stateSub;
   /// Cache of resolved preview URLs keyed by normalized track key.
   final Map<String, String> _previewCache = {};
+  /// How each cached URL was resolved: 'preview' for a 30-second
+  /// iTunes/Deezer preview, 'audius' for a full Audius stream. The
+  /// button uses this to label a full track honestly, never as a
+  /// preview. Jamendo is deliberately NOT a step here: it requires a
+  /// user-supplied client_id, and no shared key is shipped in the app.
+  final Map<String, String> _previewSource = {};
 
-  AudioPlayerNotifier(this._fallbacks, [AudioPlayer? player])
+  AudioPlayerNotifier(this._fallbacks, [AudioPlayer? player,
+      {AudiusClient? audiusClient}])
       : _player = player,
+        _audiusClient = audiusClient,
         super(const AsyncValue.data(null));
 
   /// The real player, created lazily on first actual playback so that
@@ -1093,25 +1103,85 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
   /// any. Only meaningful while [state] is [AsyncLoading].
   String? get resolvingKey => _resolvingKey;
 
+  /// Resolution source for [track] once it has been resolved:
+  /// 'preview' (30-second iTunes/Deezer sample) or 'audius' (full
+  /// Audius stream). Null before any resolution.
+  String? previewSourceFor(Track track) => _previewSource[_key(track)];
+
   /// Resolve a preview URL for [track] from cache, the track itself, or
-  /// an on-demand iTunes search. Public so the on-demand path is
-  /// testable without driving audio playback.
+  /// the on-demand chain, in order: iTunes artist+title, Deezer
+  /// artist+title, iTunes title-only (strict title match), Deezer
+  /// title-only (strict title match), then an Audius title search as
+  /// a last resort (full track, labelled via [_previewSource]).
+  /// Public so the on-demand path is testable without driving audio
+  /// playback.
   Future<String?> resolvePreview(Track track) async {
     final key = _key(track);
     // Already cached.
     final cached = _previewCache[key];
     if (cached != null) return cached;
-    // Already on the track.
+    // Already on the track: a 30-second preview.
     if (track.previewUrl != null && track.previewUrl!.isNotEmpty) {
       _previewCache[key] = track.previewUrl!;
+      _previewSource[key] = 'preview';
       return track.previewUrl;
     }
-    // On-demand iTunes lookup.
-    final preview = await _fallbacks.itunesTrackPreview(
+    // The track's own full stream (e.g. an Audius-imported track):
+    // playable, but a full track, not a preview.
+    if (track.streamUrl != null && track.streamUrl!.isNotEmpty) {
+      _previewCache[key] = track.streamUrl!;
+      _previewSource[key] = 'audius';
+      return track.streamUrl;
+    }
+    // On-demand 30-second preview chain. Each step swallows its own
+    // failures (see FallbackSources), so a dead source never blocks
+    // the later ones.
+    String? preview;
+    preview ??= await _fallbacks.itunesTrackPreview(
       track.artist, track.title,
     );
-    if (preview != null) _previewCache[key] = preview;
-    return preview;
+    preview ??= await _fallbacks.deezerTrackPreview(
+      track.artist, track.title,
+    );
+    preview ??= await _fallbacks.itunesTrackPreviewTitleOnly(
+      track.artist, track.title,
+    );
+    preview ??= await _fallbacks.deezerTrackPreviewTitleOnly(
+      track.artist, track.title,
+    );
+    if (preview != null) {
+      _previewCache[key] = preview;
+      _previewSource[key] = 'preview';
+      return preview;
+    }
+    // Last resort: an Audius title search. Full track, not a preview;
+    // the caller labels it via [previewSourceFor]. The artist string
+    // is deliberately NOT required to match here — it is exactly the
+    // polluted-artist case (channel names, 'Unknown artist') that
+    // this chain exists for — but the title must match cleanly.
+    final audius = _audiusClient;
+    if (audius != null) {
+      try {
+        final query = RecommendationEngine.cleanTrackTitle(track.title);
+        final results = await audius.searchTracks(query, limit: 5);
+        for (final result in results) {
+          if (result.streamUrl == null || result.streamUrl!.isEmpty) {
+            continue;
+          }
+          if (RecommendationEngine.cleanTrackTitle(result.title)
+                  .toLowerCase()
+                  .trim() ==
+              query.toLowerCase().trim()) {
+            _previewCache[key] = result.streamUrl!;
+            _previewSource[key] = 'audius';
+            return result.streamUrl;
+          }
+        }
+      } catch (_) {
+        // Audius is a last resort: its failure is just "no preview".
+      }
+    }
+    return null;
   }
 
   Future<void> play(Track track) async {
@@ -1164,5 +1234,16 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
 /// Shared audio player provider for preview playback.
 final audioPlayerProvider =
     StateNotifierProvider<AudioPlayerNotifier, AsyncValue<String?>>(
-  (ref) => AudioPlayerNotifier(ref.watch(fallbackSourcesProvider)),
+  // Audius is constructed here with a plain Dio (same timeouts as the
+  // Discover tab's Dio) rather than watched from discover_provider, so
+  // generation does not depend on the Discover provider file. It is
+  // only a last-resort lookup in resolvePreview; Discover playback is
+  // unaffected.
+  (ref) => AudioPlayerNotifier(
+    ref.watch(fallbackSourcesProvider),
+    audiusClient: AudiusClient(Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 15),
+    ))),
+  ),
 );

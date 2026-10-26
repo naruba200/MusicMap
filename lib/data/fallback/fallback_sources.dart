@@ -284,6 +284,105 @@ class FallbackSources {
       return null;
     }
   }
+
+  /// Cleaned-title equality (parentheticals, feat. suffixes and
+  /// version tags stripped): the strict match used by title-only
+  /// lookups, where the artist constraint is dropped and a loose
+  /// match would hand back the wrong track's preview.
+  bool _cleanTitleEquals(String a, String b) {
+    final x = RecommendationEngine.cleanTrackTitle(a).toLowerCase().trim();
+    final y = RecommendationEngine.cleanTrackTitle(b).toLowerCase().trim();
+    return x.isNotEmpty && x == y;
+  }
+
+  /// Look up a single track's preview URL on Deezer by artist + title.
+  /// Parses Deezer's `preview` field (30-second sample). Mirrors
+  /// [itunesTrackPreview]: prefers an exact title + artist-first-word
+  /// match, then falls back to the first result's preview. Failures
+  /// (including a sinkholed Deezer host) return null, never throw.
+  Future<String?> deezerTrackPreview(String artist, String title) async {
+    try {
+      final res = await _dio.get(
+        'https://api.deezer.com/search',
+        queryParameters: {'q': '$artist $title', 'limit': 5},
+      );
+      final parsed = parseDeezerTracksWithPreviews(_asMap(res.data));
+      if (parsed.previews.isEmpty) return null;
+      final firstWord = artist.toLowerCase().trim().split(' ').first;
+      for (final t in parsed.tracks) {
+        if (t.title.toLowerCase() == title.toLowerCase().trim() &&
+            t.artist.toLowerCase().contains(firstWord)) {
+          final preview = parsed
+              .previews[RecommendationEngine.normalizeKey(t.artist, t.title)];
+          if (preview != null) return preview;
+        }
+      }
+      return parsed.previews.values.first;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// iTunes preview lookup by title only, for tracks whose artist
+  /// string is polluted ('Unknown artist', a channel name, a game
+  /// prefix). Tries the cleaned-title candidates in order and
+  /// requires a cleaned-title match — unlike [itunesTrackPreview],
+  /// there is NO first-result fallback here, because without the
+  /// artist constraint that fallback would play wrong tracks.
+  Future<String?> itunesTrackPreviewTitleOnly(
+      String artist, String title) async {
+    for (final candidate in _titleSearchCandidates(artist, title)) {
+      try {
+        final res = await _dio.get(
+          'https://itunes.apple.com/search',
+          queryParameters: {
+            'term': candidate,
+            'media': 'music',
+            'entity': 'song',
+            'limit': 5,
+          },
+        );
+        final results = _asMapList(_asMap(res.data)['results']);
+        for (final item in results) {
+          final itemTitle = (item['trackName'] as String?)?.trim() ?? '';
+          if (itemTitle.isEmpty) continue;
+          if (_cleanTitleEquals(itemTitle, candidate)) {
+            final preview = parseITunesPreviewUrl(item);
+            if (preview != null) return preview;
+          }
+        }
+      } catch (_) {
+        // A failed candidate must not abort the later candidates.
+        continue;
+      }
+    }
+    return null;
+  }
+
+  /// Deezer preview lookup by title only, same strict matching as
+  /// [itunesTrackPreviewTitleOnly] and no first-result fallback.
+  Future<String?> deezerTrackPreviewTitleOnly(
+      String artist, String title) async {
+    for (final candidate in _titleSearchCandidates(artist, title)) {
+      try {
+        final res = await _dio.get(
+          'https://api.deezer.com/search',
+          queryParameters: {'q': candidate, 'limit': 5},
+        );
+        final parsed = parseDeezerTracksWithPreviews(_asMap(res.data));
+        for (final t in parsed.tracks) {
+          if (_cleanTitleEquals(t.title, candidate)) {
+            final preview = parsed
+                .previews[RecommendationEngine.normalizeKey(t.artist, t.title)];
+            if (preview != null) return preview;
+          }
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    return null;
+  }
 }
 
 /// Result of resolving one seed. [similars] are Last.fm track.getSimilar
