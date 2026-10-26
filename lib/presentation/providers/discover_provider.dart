@@ -13,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../data/discover/audius_client.dart';
 import '../../data/discover/jamendo_client.dart';
+import '../../data/discover/mixcloud_client.dart';
 import '../../data/discover/openwhyd_client.dart';
 import '../../data/models/music_models.dart';
 
@@ -219,4 +220,75 @@ final openwhydPlaylistProvider =
         error: 'Couldn\'t import that Openwhyd playlist — '
             'check the link and your connection.');
   }
+});
+
+// -- Mixcloud -------------------------------------------------------------
+// Shows/mixes browser ONLY. No provider here feeds generation, and no
+// Mixcloud show is ever converted into a seed track.
+
+final mixcloudClientProvider = Provider<MixcloudClient>(
+    (ref) => MixcloudClient(ref.watch(discoverDioProvider)));
+
+Future<DiscoverLoad<MixcloudShow>> _mixcloudShows(
+    Future<List<MixcloudShow>> Function(MixcloudClient) call,
+    Ref ref,
+    String error) async {
+  try {
+    return DiscoverLoad(items: await call(ref.watch(mixcloudClientProvider)));
+  } catch (_) {
+    return DiscoverLoad(items: [], error: error);
+  }
+}
+
+/// Popular ('popular'), hot ('hot') or new ('new') shows.
+final mixcloudFeedProvider =
+    FutureProvider.family<DiscoverLoad<MixcloudShow>, String>(
+        (ref, feed) async {
+  return _mixcloudShows((client) {
+    switch (feed) {
+      case 'hot':
+        return client.popular(hot: true);
+      case 'new':
+        return client.latest();
+      default:
+        return client.popular();
+    }
+  }, ref, 'Couldn\'t load Mixcloud shows — check your connection.');
+});
+
+/// Mixcloud show search for [query].
+final mixcloudSearchProvider =
+    FutureProvider.family<DiscoverLoad<MixcloudShow>, String>(
+        (ref, query) async {
+  if (query.trim().isEmpty) return const DiscoverLoad(items: []);
+  return _mixcloudShows(
+      (client) => client.searchShows(query.trim()),
+      ref,
+      'Mixcloud search failed — check your connection.');
+});
+
+/// Mixcloud tag search for [query].
+final mixcloudTagSearchProvider =
+    FutureProvider.family<DiscoverLoad<MixcloudTag>, String>(
+        (ref, query) async {
+  if (query.trim().isEmpty) return const DiscoverLoad(items: []);
+  try {
+    final tags = await ref
+        .watch(mixcloudClientProvider)
+        .searchTags(query.trim());
+    return DiscoverLoad(items: tags);
+  } catch (_) {
+    return const DiscoverLoad(
+        items: [], error: 'Mixcloud tag search failed.');
+  }
+});
+
+/// Shows for a tag key (e.g. '/genres/funk/').
+final mixcloudTagShowsProvider =
+    FutureProvider.family<DiscoverLoad<MixcloudShow>, String>(
+        (ref, tagKey) async {
+  return _mixcloudShows(
+      (client) => client.tagShows(tagKey),
+      ref,
+      'Couldn\'t load shows for that tag.');
 });
