@@ -203,6 +203,34 @@ final relatedGenresProvider =
 String _displayTag(String tag) =>
     tag.isEmpty ? tag : tag[0].toUpperCase() + tag.substring(1);
 
+/// Runs [fn] over [items] in batches of [batchSize] in flight at
+/// once, preserving input order in the returned list. Used to bound
+/// Last.fm fan-out (batchSize 5 in generation) instead of
+/// one-at-a-time loops, without unbounded concurrency. [onProgress]
+/// is called after each batch; [shouldStop] is checked between
+/// batches and, when true, stops early and returns the results
+/// gathered so far (the caller must then check why it stopped).
+Future<List<R>> mapBatched<T, R>(
+  List<T> items,
+  int batchSize,
+  Future<R> Function(int index, T item) fn, {
+  void Function(int done, int total)? onProgress,
+  bool Function()? shouldStop,
+}) async {
+  final results = <R>[];
+  for (var start = 0; start < items.length; start += batchSize) {
+    final end =
+        start + batchSize > items.length ? items.length : start + batchSize;
+    final batch = await Future.wait(
+      [for (var i = start; i < end; i++) fn(i, items[i])],
+    );
+    results.addAll(batch);
+    onProgress?.call(end, items.length);
+    if (shouldStop != null && shouldStop()) break;
+  }
+  return results;
+}
+
 class GenerationNotifier extends StateNotifier<GenerationState> {
   final Dio _dio;
   final HistoryRepository _history;
@@ -234,6 +262,12 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   /// capped call per generation, cached 7 days. Never aborts a run.
   late final ListenBrainzClient _listenBrainz = ListenBrainzClient();
   bool _cancelled = false;
+
+  /// Monotonic run id: background enrichment from an older run must
+  /// never publish over a newer run's state or history. Incremented
+  /// at the start of every generate/surprise run; background steps
+  /// check [_isStale] before each publish.
+  int _generationRun = 0;
 
   GenerationNotifier(this._dio, this._history, this._favorites,
       [this._settingsRepository])
@@ -328,6 +362,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
     String? seedPlatformId,
   }) async {
     _cancelled = false;
+    final runId = ++_generationRun;
     state = const GenerationState(running: true);
     try {
       _requireKey();
@@ -350,11 +385,14 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       // 30-second preview URL for in-app playback.
       final previewByKey = <String, String>{};
       var skipped = 0;
-      for (var i = 0; i < selection.seeds.length; i++) {
-        if (_cancelled) return _abort();
-        _setProgress('Finding similar tracks', i, selection.seeds.length);
-        final seed = selection.seeds[i];
-        final resolved = await resolveSeedSimilars(
+      // Batched (5 in flight) instead of one seed at a time: the
+      // sources within one seed already run concurrently, but seeds
+      // never overlapped before. Merge stays sequential and in seed
+      // order, so scoring is unchanged.
+      final resolvedBySeed = await mapBatched(
+        selection.seeds,
+        5,
+        (i, seed) => resolveSeedSimilars(
           artist: RecommendationEngine.primaryArtist(seed.artist),
           title: seed.title,
           getSimilar: (a, t) => _lfm.getSimilarTracks(a, t),
@@ -368,7 +406,15 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
               _fallbacks.itunesArtistTracksWithPreviews,
           // Title-only last resort (Phase 1 sparse generation).
           searchTracksByTitle: (t) => _lfm.searchTracks(t),
-        );
+        ),
+        shouldStop: () => _cancelled,
+        onProgress: (done, total) =>
+            _setProgress('Finding similar tracks', done, total),
+      );
+      if (_cancelled) return _abort();
+      for (var i = 0; i < selection.seeds.length; i++) {
+        final seed = selection.seeds[i];
+        final resolved = resolvedBySeed[i];
         if (resolved.isEmpty) {
           skipped++;
         } else {
@@ -385,8 +431,6 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           previewByKey.addAll(resolved.fallbackPreviews);
         }
       }
-      _setProgress('Finding similar tracks', selection.seeds.length,
-          selection.seeds.length);
       if (similarBySeed.isEmpty && fallbackBySeed.isEmpty) {
         throw GenerationException(
           'None of the seed tracks had similar-track data on Last.fm. '
@@ -451,32 +495,37 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         if (_cancelled) return _abort();
         _setProgress('Expanding seed artists', 0, selection.seeds.length);
         final expansionBySeed = <int, List<SimilarTrack>>{};
-        var expIdx = 0;
+        final expansionLists = await mapBatched(
+          selection.seeds,
+          5,
+          (i, seed) async {
+            final artist = RecommendationEngine.primaryArtist(seed.artist);
+            try {
+              final topTracks =
+                  await _lfm.getArtistTopTracks(artist, limit: 15);
+              final sims = <SimilarTrack>[];
+              for (final t in topTracks) {
+                sims.add(SimilarTrack(
+                  artist: t.artist,
+                  title: t.title,
+                  match: 0,
+                ));
+              }
+              return sims;
+            } catch (_) {
+              // one bad artist must not kill the run
+              return const <SimilarTrack>[];
+            }
+          },
+          shouldStop: () => _cancelled,
+          onProgress: (done, total) =>
+              _setProgress('Expanding seed artists', done, total),
+        );
+        if (_cancelled) return _abort();
         for (var i = 0; i < selection.seeds.length; i++) {
-          if (_cancelled) return _abort();
-          final seed = selection.seeds[i];
-          final artist = RecommendationEngine.primaryArtist(seed.artist);
-          try {
-            final topTracks = await _lfm.getArtistTopTracks(artist, limit: 15);
-            final sims = <SimilarTrack>[];
-            for (final t in topTracks) {
-              sims.add(SimilarTrack(
-                artist: t.artist,
-                title: t.title,
-                match: 0,
-              ));
-              // Stash iTunes-free preview: artist top tracks don't carry
-              // preview URLs, so these stay preview-less unless resolved
-              // on demand later.
-            }
-            if (sims.isNotEmpty) {
-              expansionBySeed[i] = sims;
-            }
-          } catch (_) {
-            // one bad artist must not kill the run
+          if (expansionLists[i].isNotEmpty) {
+            expansionBySeed[i] = expansionLists[i];
           }
-          _setProgress('Expanding seed artists', ++expIdx,
-              selection.seeds.length);
         }
         if (expansionBySeed.isNotEmpty) {
           final expansionReasons = <int, String>{};
@@ -535,41 +584,57 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         final simExpReasons = <int, String>{};
         var simAdded = 0;
         const simCap = 40;
-        var simIdx = 0;
+        final simExpansionLists = await mapBatched(
+          selection.seeds,
+          5,
+          (i, seed) async {
+            final artist = RecommendationEngine.primaryArtist(seed.artist);
+            try {
+              final similars = await _lfm.getSimilarArtists(artist);
+              final sims = <SimilarTrack>[];
+              for (final similar in similars.take(2)) {
+                try {
+                  final topTracks =
+                      await _lfm.getArtistTopTracks(similar, limit: 5);
+                  for (final t in topTracks) {
+                    sims.add(SimilarTrack(
+                      artist: t.artist,
+                      title: t.title,
+                      match: 0,
+                    ));
+                  }
+                } catch (_) {
+                  // one bad similar artist must not kill the run
+                }
+              }
+              return sims;
+            } catch (_) {
+              // one bad artist must not kill the run
+              return const <SimilarTrack>[];
+            }
+          },
+          shouldStop: () => _cancelled,
+          onProgress: (done, total) =>
+              _setProgress('Exploring similar artists', done, total),
+        );
+        if (_cancelled) return _abort();
         for (var i = 0; i < selection.seeds.length; i++) {
-          if (_cancelled) return _abort();
           if (simAdded >= simCap) break;
           final seed = selection.seeds[i];
           final artist = RecommendationEngine.primaryArtist(seed.artist);
-          try {
-            final similars = await _lfm.getSimilarArtists(artist);
-            final sims = <SimilarTrack>[];
-            for (final similar in similars.take(2)) {
-              if (simAdded >= simCap) break;
-              try {
-                final topTracks =
-                    await _lfm.getArtistTopTracks(similar, limit: 5);
-                for (final t in topTracks) {
-                  sims.add(SimilarTrack(
-                    artist: t.artist,
-                    title: t.title,
-                    match: 0,
-                  ));
-                  simAdded++;
-                }
-              } catch (_) {
-                // one bad similar artist must not kill the run
-              }
-            }
-            if (sims.isNotEmpty) {
-              simExpBySeed[i] = sims;
-              simExpReasons[i] = 'Similar artists to $artist';
-            }
-          } catch (_) {
-            // one bad artist must not kill the run
+          final sims = simExpansionLists[i];
+          if (sims.isEmpty) continue;
+          // Enforce the 40-track cap in seed order (the old
+          // sequential loop could overshoot it by up to one similar
+          // artist's tracks; the cap is now exact).
+          final remaining = simCap - simAdded;
+          final take = remaining < sims.length ? remaining : sims.length;
+          final taken = sims.sublist(0, take);
+          if (taken.isNotEmpty) {
+            simExpBySeed[i] = taken;
+            simExpReasons[i] = 'Similar artists to $artist';
+            simAdded += taken.length;
           }
-          _setProgress('Exploring similar artists', ++simIdx,
-              selection.seeds.length);
         }
         if (simExpBySeed.isNotEmpty) {
           final simExpanded = RecommendationEngine.scoreCandidates(
@@ -696,61 +761,48 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       // 5. Album enrichment (FR-11): track.getSimilar carries no album
       // data, so without this the Albums tab would always be empty.
       // Look it up for the top songs (capped) before deriving albums.
-      final enriched = <ScoredTrack>[];
       final enrichN = songs.length < 50 ? songs.length : 50;
-      for (var i = 0; i < songs.length; i++) {
-        if (_cancelled) return _abort();
-        final st = songs[i];
-        if (i < enrichN) {
-          _setProgress('Looking up album info', i, enrichN);
+      // Batched (5 in flight) instead of one lookup at a time;
+      // Future.wait preserves input order, so `enriched` stays in
+      // song order exactly as the sequential loop produced it.
+      final enriched = await mapBatched(
+        songs,
+        5,
+        (i, st) async {
+          if (i >= enrichN) return st;
           try {
             final info = await _lfm.getTrackInfo(
               RecommendationEngine.primaryArtist(st.track.artist),
               st.track.title,
             );
             final album = info.album?.trim();
-            enriched.add(album == null || album.isEmpty
-                ? st
-                : ScoredTrack(
-                    track: Track(
-                      title: st.track.title,
-                      artist: st.track.artist,
-                      album: album,
-                      imageUrl: info.imageUrl ?? st.track.imageUrl,
-                      durationMs: st.track.durationMs,
-                      platformTrackId: st.track.platformTrackId,
-                      previewUrl: st.track.previewUrl,
-                    ),
-                    score: st.score,
-                    reasons: st.reasons,
-                  ));
+            if (album == null || album.isEmpty) return st;
+            return ScoredTrack(
+              track: Track(
+                title: st.track.title,
+                artist: st.track.artist,
+                album: album,
+                imageUrl: info.imageUrl ?? st.track.imageUrl,
+                durationMs: st.track.durationMs,
+                platformTrackId: st.track.platformTrackId,
+                previewUrl: st.track.previewUrl,
+              ),
+              score: st.score,
+              reasons: st.reasons,
+            );
           } catch (_) {
-            enriched.add(st); // one bad lookup must not kill the run
+            return st; // one bad lookup must not kill the run
           }
-        } else {
-          enriched.add(st);
-        }
-      }
-      _setProgress('Looking up album info', enrichN, enrichN);
+        },
+        shouldStop: () => _cancelled,
+        onProgress: (done, total) => _setProgress('Looking up album info',
+            done < enrichN ? done : enrichN, enrichN),
+      );
+      if (_cancelled) return _abort();
+
 
       final albums =
           RecommendationEngine.deriveAlbums(enriched, settings.albumCount);
-      // 6. MusicBrainz enrichment: AFTER scoring, top 10 only,
-      // cached 30 days, 1 req/s. Annotates only, never rescores.
-      if (_cancelled) return _abort();
-      final enrichments = await _enrichTopTracks(enriched);
-      if (_cancelled) return _abort();
-      // 7. Discogs album enrichment: top 5 albums only, cached
-      // 30 days. Annotates only, never rescores.
-      var albumEnrichments =
-          await _enrichTopAlbums(albums, enrichments);
-      if (_cancelled) return _abort();
-      // 8. TheAudioDB album enrichment: artwork + discography,
-      // merged into the Discogs map. Annotates only, never drops
-      // existing entries.
-      albumEnrichments = await _enrichTopAlbumsTadb(
-          albums, albumEnrichments, enrichments);
-      if (_cancelled) return _abort();
       // Sparse-result explanation (Phase 1): when the sources ran dry
       // and the list came up short, say so instead of silently
       // showing few songs.
@@ -765,18 +817,50 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
             'songs could be found — ${skippedPart}the sources ran dry. '
             'Try a larger or more mainstream playlist.';
       }
+      // Results first: publish the unenriched result now, so the
+      // Results screen opens as soon as scoring + album info are
+      // done. Enrichment below only annotates cards (it never
+      // rescores or reorders), so each step merges in via a later
+      // publish that the live Results screen picks up. History is
+      // written only once, at the very end, with the full enriched
+      // result — exactly as before.
+      var current = GenerationResult(
+        songs: enriched,
+        albums: albums,
+        seedName: seedName,
+        isSurprise: false,
+        seedCount: selection.seeds.length,
+        skippedSeeds: skipped,
+        sparseExplanation: sparseExplanation,
+      );
+      _publishResult(current);
+      // 6. MusicBrainz enrichment: AFTER scoring, top 10 only,
+      // cached 30 days, 1 req/s, still strictly serial (the cap is
+      // policy, not a bottleneck to parallelize away). Annotates
+      // only, never rescores.
+      if (_isStale(runId)) return;
+      final enrichments = await _enrichTopTracks(enriched);
+      if (_isStale(runId)) return;
+      current = _withEnrichments(current, enrichments: enrichments);
+      _publishResult(current);
+      // 7. Discogs album enrichment: top 5 albums only, cached
+      // 30 days. Annotates only, never rescores.
+      var albumEnrichments =
+          await _enrichTopAlbums(albums, enrichments);
+      if (_isStale(runId)) return;
+      current =
+          _withEnrichments(current, albumEnrichments: albumEnrichments);
+      _publishResult(current);
+      // 8. TheAudioDB album enrichment: artwork + discography,
+      // merged into the Discogs map. Annotates only, never drops
+      // existing entries.
+      albumEnrichments = await _enrichTopAlbumsTadb(
+          albums, albumEnrichments, enrichments);
+      if (_isStale(runId)) return;
+      current =
+          _withEnrichments(current, albumEnrichments: albumEnrichments);
       await _finishRun(
-        result: GenerationResult(
-          songs: enriched,
-          albums: albums,
-          seedName: seedName,
-          isSurprise: false,
-          seedCount: selection.seeds.length,
-          skippedSeeds: skipped,
-          sparseExplanation: sparseExplanation,
-          enrichments: enrichments,
-          albumEnrichments: albumEnrichments,
-        ),
+        result: current,
         seedPlaylistId: seedPlaylistId,
         seedPlatformId: seedPlatformId,
       );
@@ -792,6 +876,9 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   /// No-seed discovery (FR-19).
   Future<void> surprise({required DiscoverySettings settings}) async {
     _cancelled = false;
+    // A surprise run supersedes any background enrichment still
+    // running from an earlier playlist run (see [_isStale]).
+    _generationRun++;
     state = const GenerationState(running: true);
     try {
       _requireKey();
@@ -1005,6 +1092,39 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
     final shuffled = [...pool]..shuffle(random);
     return shuffled.take(3).toList();
   }
+
+  /// True when this run is no longer current: cancelled, or a newer
+  /// run has started. Background enrichment steps must check this
+  /// before each publish so they never overwrite a newer run.
+  bool _isStale(int runId) => _cancelled || runId != _generationRun;
+
+  /// Publish a result to state without writing history yet. Used for
+  /// the results-first emit: the user sees songs/albums as soon as
+  /// scoring + album info are done, while enrichment still runs in
+  /// the background and merges in via later publishes.
+  void _publishResult(GenerationResult result) {
+    state = GenerationState(result: result);
+  }
+
+  /// A copy of [base] with new enrichment maps (same songs, albums,
+  /// seed info and explanation). Enrichment never rescores or
+  /// reorders, so only the annotation maps change.
+  GenerationResult _withEnrichments(
+    GenerationResult base, {
+    Map<String, TrackEnrichment>? enrichments,
+    Map<String, AlbumEnrichment>? albumEnrichments,
+  }) =>
+      GenerationResult(
+        songs: base.songs,
+        albums: base.albums,
+        seedName: base.seedName,
+        isSurprise: base.isSurprise,
+        seedCount: base.seedCount,
+        skippedSeeds: base.skippedSeeds,
+        sparseExplanation: base.sparseExplanation,
+        enrichments: enrichments ?? base.enrichments,
+        albumEnrichments: albumEnrichments ?? base.albumEnrichments,
+      );
 
   /// Persist a completed run to history (FR-13), then publish the result.
   /// History failures never fail the run itself.

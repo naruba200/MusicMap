@@ -76,7 +76,10 @@ class _GeneratingScreenState extends ConsumerState<GeneratingScreen> {
       if (next.result != null && mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
-            builder: (_) => ResultsScreen(result: next.result!),
+            builder: (_) => ResultsScreen(
+              result: next.result!,
+              liveEnrichment: true,
+            ),
           ),
         );
       }

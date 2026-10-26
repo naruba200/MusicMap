@@ -32,11 +32,24 @@ String _albumCacheKey(String artist, String album) =>
 class ResultsScreen extends ConsumerWidget {
   final GenerationResult result;
 
-  const ResultsScreen({super.key, required this.result});
+  /// When true (the generating flow), the screen follows the live
+  /// generation state so background enrichment merges in after the
+  /// results-first publish. When false (History and other stored
+  /// results), the passed-in snapshot is shown exactly as stored.
+  final bool liveEnrichment;
+
+  const ResultsScreen(
+      {super.key, required this.result, this.liveEnrichment = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    // Live mode: the provider's latest result for this run (falling
+    // back to the published snapshot if the provider has been reset).
+    // Stored mode: the snapshot, untouched by any newer generation.
+    final result = liveEnrichment
+        ? (ref.watch(generationProvider).result ?? this.result)
+        : this.result;
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -58,14 +71,14 @@ class ResultsScreen extends ConsumerWidget {
         ),
         body: Column(
           children: [
-            _statsBar(theme),
+            _statsBar(theme, result),
             if (result.sparseExplanation != null)
               _sparseBanner(theme, result.sparseExplanation!),
             Expanded(
               child: TabBarView(
                 children: [
-                  _songsTab(ref),
-                  _albumsTab(ref),
+                  _songsTab(ref, result),
+                  _albumsTab(ref, result),
                 ],
               ),
             ),
@@ -75,7 +88,7 @@ class ResultsScreen extends ConsumerWidget {
     );
   }
 
-  Widget _statsBar(ThemeData theme) {
+  Widget _statsBar(ThemeData theme, GenerationResult result) {
     final parts = <String>[
       '${result.songs.length} songs',
       '${result.albums.length} albums',
@@ -125,7 +138,7 @@ class ResultsScreen extends ConsumerWidget {
     );
   }
 
-  Widget _songsTab(WidgetRef ref) {
+  Widget _songsTab(WidgetRef ref, GenerationResult result) {
     if (result.songs.isEmpty) {
       return const _EmptyState(
         icon: Icons.music_off_outlined,
@@ -145,7 +158,7 @@ class ResultsScreen extends ConsumerWidget {
     );
   }
 
-  Widget _albumsTab(WidgetRef ref) {
+  Widget _albumsTab(WidgetRef ref, GenerationResult result) {
     if (result.albums.isEmpty) {
       return const _EmptyState(
         icon: Icons.album_outlined,
