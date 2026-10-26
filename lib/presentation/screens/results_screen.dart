@@ -11,7 +11,6 @@ import '../../data/engine/recommendation_engine.dart';
 import '../../data/enrichment/album_enrichment.dart';
 import '../../data/enrichment/enrichment_models.dart';
 import '../../data/lastfm/lastfm_client.dart';
-import '../../data/models/music_models.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
 import '../widgets/favorite_button.dart';

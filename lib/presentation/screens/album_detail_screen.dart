@@ -6,8 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/engine/recommendation_engine.dart';
-import '../../data/models/music_models.dart';
-import '../providers/generation_provider.dart';
 import '../widgets/favorite_button.dart';
 import '../widgets/preview_button.dart';
 import '../widgets/outbound_sheet.dart';
