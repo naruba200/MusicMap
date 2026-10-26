@@ -9,3 +9,4 @@ export 'favorites_screen.dart';
 export 'history_screen.dart';
 export 'settings_screen.dart';
 export 'news_screen.dart';
+export 'discover_screen.dart';

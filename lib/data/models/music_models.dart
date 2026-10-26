@@ -10,6 +10,9 @@ class Track {
   final int? durationMs;
   final String? platformTrackId;
   final String? previewUrl; // 30-second preview (iTunes), nullable
+  /// Full-length stream URL (Audius/Jamendo Discover tabs only). Core
+  /// scoring and the preview player never use this field.
+  final String? streamUrl;
 
   const Track({
     required this.title,
@@ -19,6 +22,7 @@ class Track {
     this.durationMs,
     this.platformTrackId,
     this.previewUrl,
+    this.streamUrl,
   });
 
   Map<String, dynamic> toJson() => {
@@ -29,6 +33,7 @@ class Track {
         if (durationMs != null) 'durationMs': durationMs,
         if (platformTrackId != null) 'platformTrackId': platformTrackId,
         if (previewUrl != null) 'previewUrl': previewUrl,
+        if (streamUrl != null) 'streamUrl': streamUrl,
       };
 
   factory Track.fromJson(Map<String, dynamic> json) => Track(
@@ -39,6 +44,7 @@ class Track {
         durationMs: (json['durationMs'] as num?)?.toInt(),
         platformTrackId: json['platformTrackId'] as String?,
         previewUrl: json['previewUrl'] as String?,
+        streamUrl: json['streamUrl'] as String?,
       );
 }
 

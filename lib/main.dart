@@ -76,7 +76,8 @@ void _showStartupError(String error, StackTrace? stack) {
   );
 }
 
-/// Bottom-nav tab index (Home, News, Favorites, History, Settings).
+/// Bottom-nav tab index (Home, Discover, News, Favorites, History,
+/// Settings).
 
 class MusicManApp extends ConsumerWidget {
   const MusicManApp({super.key});
@@ -107,6 +108,7 @@ class _RootScaffold extends ConsumerWidget {
 
   static const _screens = [
     HomeScreen(),
+    DiscoverScreen(),
     NewsScreen(),
     FavoritesScreen(),
     HistoryScreen(),
@@ -115,6 +117,7 @@ class _RootScaffold extends ConsumerWidget {
 
   static const _destinations = [
     (Icons.home_outlined, Icons.home, 'Home'),
+    (Icons.explore_outlined, Icons.explore, 'Discover'),
     (Icons.newspaper_outlined, Icons.newspaper, 'News'),
     (Icons.favorite_outline, Icons.favorite, 'Favorites'),
     (Icons.history_outlined, Icons.history, 'History'),

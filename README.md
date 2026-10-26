@@ -24,6 +24,10 @@ plain-English explanations of *why* each pick fits your taste.
   cache.
 - **Open anywhere** — every song/album links out to Spotify, Deezer,
   YouTube, or YouTube Music (search links, no auth needed).
+- **Discover tab** — separate tabs per new source (Audius first), kept
+  out of core Last.fm scoring. Audius: trending tracks, track/playlist
+  search, playlist import with a "Get recommendations" run, and full
+  streams that play inside the Audius tab only.
 - **Private by design** — no accounts, no servers, no ads, no tracking.
   Everything lives on your device. ([Privacy policy](docs/privacy.html))
 
@@ -68,6 +72,9 @@ share intents is Android-only and is skipped on desktop.
 - **Last.fm**: free API key (spec §10) in `lastFmApiKey`
   (`lib/core/constants.dart`). Free-tier, revocable — never commit a paid
   key.
+- **Audius (Phase 4)**: no key needed. The discovery host is resolved
+  from `https://api.audius.co` at runtime (hard-coded fallback host if
+  that lookup fails); all calls send `app_name=MusicMan`.
 - **YouTube Music full playlists (Phase 4a)**: no key needed. The
   WEB_REMIX client caps a playlist shelf at 100 tracks and its
   continuation token dead-ends, so the adapter now also walks the same
