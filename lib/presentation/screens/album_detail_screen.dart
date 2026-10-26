@@ -140,17 +140,28 @@ class _PreviewButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Watch the player state (not just read the notifier) so the icon
+    // rebuilds on play / pause / resolve transitions.
+    final playerState = ref.watch(audioPlayerProvider);
     final player = ref.read(audioPlayerProvider.notifier);
-    final hasPreview = track.previewUrl != null && track.previewUrl!.isNotEmpty;
-    final key = '${track.artist.toLowerCase().trim()} - ${track.title.toLowerCase().trim()}';
-    final isPlaying = hasPreview &&
-        ref.read(audioPlayerProvider.notifier).playingKey == key;
+    // Same normalization as the player and the fallback layer, so the
+    // playing key matches even for remaster-suffixed titles.
+    final key =
+        RecommendationEngine.normalizeKey(track.artist, track.title);
+    final isPlaying = playerState.valueOrNull == key;
+    final isResolving =
+        playerState is AsyncLoading && player.resolvingKey == key;
 
-    if (!hasPreview) {
-      return const Icon(
-        Icons.audiotrack,
-        size: 20,
-        color: Colors.grey,
+    // Always tappable: a tap on a preview-less track runs the on-demand
+    // iTunes lookup in AudioPlayerNotifier instead of doing nothing.
+    if (isResolving) {
+      return const Padding(
+        padding: EdgeInsets.all(14),
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
       );
     }
 
