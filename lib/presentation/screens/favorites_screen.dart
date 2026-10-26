@@ -12,6 +12,7 @@ import '../providers/providers.dart';
 import '../widgets/outbound_sheet.dart';
 import '../widgets/youtube_export_sheet.dart';
 import 'album_detail_screen.dart';
+import 'artist_events_screen.dart';
 
 class FavoritesScreen extends ConsumerStatefulWidget {
   const FavoritesScreen({super.key});
@@ -62,6 +63,19 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         appBar: AppBar(
           title: const Text('Favorites'),
           actions: [
+            IconButton(
+              icon: const Icon(Icons.event_outlined),
+              tooltip: 'Upcoming events',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ArtistEventsScreen(
+                    artists: ref
+                        .read(favoritesRepositoryProvider)
+                        .favoritedArtists(),
+                  ),
+                ),
+              ),
+            ),
             if (tracks.isNotEmpty || albums.isNotEmpty)
               IconButton(
                 icon: Icon(_selectMode ? Icons.close : Icons.checklist),

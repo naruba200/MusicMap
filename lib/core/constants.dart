@@ -22,6 +22,15 @@ const String lastFmApiKey = 'afe16fee1f96d0177b7d691f4b7bc89c';
 /// hint instead of making calls.
 const String jamendoClientId = 'YOUR_JAMENDO_CLIENT_ID';
 
+/// Bandsintown API app ID (Phase 5, dormant code path only).
+/// Bandsintown issues app IDs only with its written consent for the
+/// intended use (accept terms at corp.bandsintown.com/dataapplicationsterms,
+/// then contact Bandsintown via help.bandsintown.com). Placeholder in
+/// the repo: replace locally with an issued id, never commit a real
+/// one. Until it is set, the events screen shows a setup hint and
+/// makes NO network calls at all.
+const String bandsintownAppId = 'YOUR_BANDSINTOWN_APP_ID';
+
 /// Supported platform IDs.
 class PlatformIds {
   static const String spotify = 'spotify';
