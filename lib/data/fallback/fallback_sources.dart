@@ -61,14 +61,28 @@ List<String> parseDeezerRelatedIds(Map<String, dynamic> json) {
 
 /// Tracks from a Deezer /artist/{id}/top (or /search) response.
 List<SimilarTrack> parseDeezerTracks(Map<String, dynamic> json) {
+  return parseDeezerTracksWithPreviews(json).tracks;
+}
+
+/// Tracks plus 30-second preview URLs from a Deezer response.
+/// Deezer already returns a `preview` field per track; it was parsed
+/// away until now. Preview keys use [RecommendationEngine.normalizeKey],
+/// the same function generation uses to look them up.
+({List<SimilarTrack> tracks, Map<String, String> previews})
+    parseDeezerTracksWithPreviews(Map<String, dynamic> json) {
   final tracks = <SimilarTrack>[];
+  final previews = <String, String>{};
   for (final item in _asMapList(json['data'])) {
     final artist = _artistName(item['artist']) ?? '';
     final title = (item['title'] as String?)?.trim() ?? '';
     if (artist.isEmpty || title.isEmpty) continue;
     tracks.add(SimilarTrack(artist: artist, title: title, match: 0));
+    final preview = (item['preview'] as String?)?.trim();
+    if (preview != null && preview.isNotEmpty) {
+      previews[RecommendationEngine.normalizeKey(artist, title)] = preview;
+    }
   }
-  return tracks;
+  return (tracks: tracks, previews: previews);
 }
 
 /// Tracks from an iTunes Search API response (results: trackName/artistName).
@@ -125,11 +139,45 @@ class FallbackSources {
   }
 
   Future<List<SimilarTrack>> _deezerTop(String artistId) async {
+    return (await _deezerTopWithPreviews(artistId)).tracks;
+  }
+
+  Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
+      _deezerTopWithPreviews(String artistId) async {
     final res = await _dio.get(
       'https://api.deezer.com/artist/$artistId/top',
       queryParameters: {'limit': 8},
     );
-    return parseDeezerTracks(_asMap(res.data));
+    return parseDeezerTracksWithPreviews(_asMap(res.data));
+  }
+
+  /// Deezer artist tracks plus their preview URLs, mirroring
+  /// [itunesArtistTracksWithPreviews]. Same search → top → related
+  /// chain as [deezerArtistTracks]; failures still return empty.
+  Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
+      deezerArtistTracksWithPreviews(String artist) async {
+    try {
+      final search = await _dio.get(
+        'https://api.deezer.com/search/artist',
+        queryParameters: {'q': artist},
+      );
+      final id = parseDeezerArtistId(_asMap(search.data));
+      if (id == null) {
+        return (tracks: const <SimilarTrack>[], previews: <String, String>{});
+      }
+      var result = await _deezerTopWithPreviews(id);
+      if (result.tracks.isNotEmpty) return result;
+      final related = await _dio.get(
+        'https://api.deezer.com/artist/$id/related',
+      );
+      for (final rid in parseDeezerRelatedIds(_asMap(related.data)).take(2)) {
+        result = await _deezerTopWithPreviews(rid);
+        if (result.tracks.isNotEmpty) return result;
+      }
+      return (tracks: const <SimilarTrack>[], previews: <String, String>{});
+    } catch (_) {
+      return (tracks: const <SimilarTrack>[], previews: <String, String>{});
+    }
   }
 
   /// iTunes artist search; returns tracks plus a parallel map of
@@ -260,6 +308,11 @@ Future<SeedSimilarResult> resolveSeedSimilars({
       deezerArtistTracks,
   required Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
       Function(String artist) itunesArtistTracksWithPreviews,
+  // Optional Deezer-with-previews variant. When given, it replaces
+  // [deezerArtistTracks] (one Deezer call chain, not two) and its
+  // previews join [SeedSimilarResult.fallbackPreviews].
+  Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
+      Function(String artist)? deezerArtistTracksWithPreviews,
 }) async {
   Future<List<SimilarTrack>?> trySimilar(String t) async {
     try {
@@ -297,11 +350,18 @@ Future<SeedSimilarResult> resolveSeedSimilars({
   // --- Always-run sources (concurrent with Last.fm primary).
   // Safe wrappers catch errors inside the async function so the returned
   // Future never completes with an error — Deezer/iTunes can never abort.
-  Future<List<SimilarTrack>> safeDeezer() async {
+  Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
+      safeDeezer() async {
     try {
-      return await deezerArtistTracks(artist);
+      if (deezerArtistTracksWithPreviews != null) {
+        return await deezerArtistTracksWithPreviews(artist);
+      }
+      return (
+        tracks: await deezerArtistTracks(artist),
+        previews: <String, String>{}
+      );
     } catch (_) {
-      return const [];
+      return (tracks: const <SimilarTrack>[], previews: <String, String>{});
     }
   }
 
@@ -327,11 +387,18 @@ Future<SeedSimilarResult> resolveSeedSimilars({
   }
 
   // Await the always-run sources (errors already swallowed).
-  final deezer = await deezerFuture;
+  final deezerResult = await deezerFuture;
+  final deezer = deezerResult.tracks;
   final itunesResult = await itunesFuture;
   final alwaysFallbacks = <SimilarTrack>[];
   alwaysFallbacks.addAll(deezer);
   alwaysFallbacks.addAll(itunesResult.tracks);
+  // Deezer previews fill gaps; iTunes wins on a key conflict (it was
+  // the established preview source).
+  final fallbackPreviews = {
+    ...deezerResult.previews,
+    ...itunesResult.previews,
+  };
 
   if (sims != null && sims.isNotEmpty) {
     // Last.fm similars are primary; Deezer/iTunes join as fallbacks.
@@ -340,7 +407,7 @@ Future<SeedSimilarResult> resolveSeedSimilars({
       fallbacks: alwaysFallbacks,
       fallbackReason:
           alwaysFallbacks.isNotEmpty ? 'More from $artist' : null,
-      fallbackPreviews: itunesResult.previews,
+      fallbackPreviews: fallbackPreviews,
     );
   }
 
@@ -351,7 +418,7 @@ Future<SeedSimilarResult> resolveSeedSimilars({
       similars: const [],
       fallbacks: [...toSimilars(top), ...alwaysFallbacks],
       fallbackReason: 'More from $artist',
-      fallbackPreviews: itunesResult.previews,
+      fallbackPreviews: fallbackPreviews,
     );
   }
 
@@ -363,7 +430,7 @@ Future<SeedSimilarResult> resolveSeedSimilars({
         similars: const [],
         fallbacks: [...toSimilars(top), ...alwaysFallbacks],
         fallbackReason: 'More from $similar',
-        fallbackPreviews: itunesResult.previews,
+        fallbackPreviews: fallbackPreviews,
       );
     }
   }
@@ -374,7 +441,7 @@ Future<SeedSimilarResult> resolveSeedSimilars({
       similars: const [],
       fallbacks: alwaysFallbacks,
       fallbackReason: 'More from $artist',
-      fallbackPreviews: itunesResult.previews,
+      fallbackPreviews: fallbackPreviews,
     );
   }
 

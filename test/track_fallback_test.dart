@@ -170,6 +170,80 @@ void main() {
       expect(parseITunesPreviewUrl({}), isNull);
       expect(parseITunesPreviewUrl('not a map'), isNull);
     });
+
+    test('parseDeezerTracksWithPreviews extracts preview, drops empties',
+        () {
+      final result = parseDeezerTracksWithPreviews({
+        'data': [
+          {
+            'title': 'Hit',
+            'artist': {'name': 'Singer'},
+            'preview': 'https://example.com/deezer.m4a',
+          },
+          {
+            'title': 'No Preview',
+            'artist': {'name': 'Singer'},
+            'preview': '',
+          },
+          {
+            'title': 'Missing Preview',
+            'artist': {'name': 'Singer'},
+          },
+        ]
+      });
+      expect(result.tracks.length, 3);
+      expect(
+          result.previews[
+              RecommendationEngine.normalizeKey('Singer', 'Hit')],
+          'https://example.com/deezer.m4a');
+      expect(result.previews.length, 1);
+    });
+
+    test('deezerArtistTracksWithPreviews returns tracks + previews',
+        () async {
+      final dio = Dio();
+      dio.httpClientAdapter = _UrlCannedAdapter((options) {
+        final url = options.uri.toString();
+        if (url.contains('/search/artist')) {
+          return {
+            'data': [
+              {'id': 7, 'name': 'Singer'}
+            ]
+          };
+        }
+        if (url.contains('/artist/7/top')) {
+          return {
+            'data': [
+              {
+                'title': 'Hit',
+                'artist': {'name': 'Singer'},
+                'preview': 'https://example.com/deezer.m4a',
+              }
+            ]
+          };
+        }
+        return {'data': []};
+      });
+      final result =
+          await FallbackSources(dio).deezerArtistTracksWithPreviews('Singer');
+      expect(result.tracks.single.title, 'Hit');
+      expect(
+          result.previews[
+              RecommendationEngine.normalizeKey('Singer', 'Hit')],
+          'https://example.com/deezer.m4a');
+    });
+
+    test('deezerArtistTracksWithPreviews returns empty on Deezer failure',
+        () async {
+      final dio = Dio();
+      dio.httpClientAdapter = _UrlCannedAdapter((_) {
+        throw Exception('connection refused');
+      });
+      final result =
+          await FallbackSources(dio).deezerArtistTracksWithPreviews('Singer');
+      expect(result.tracks, isEmpty);
+      expect(result.previews, isEmpty);
+    });
   });
 
   group('resolveSeedSimilars', () {
@@ -180,6 +254,8 @@ void main() {
       Future<List<SimilarTrack>> Function(String)? deezer,
       Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
               Function(String)? itunes,
+      Future<({List<SimilarTrack> tracks, Map<String, String> previews})>
+              Function(String)? deezerWithPreviews,
     }) =>
         resolveSeedSimilars(
           artist: 'Obscure Artist',
@@ -194,6 +270,7 @@ void main() {
           itunesArtistTracksWithPreviews: itunes ??
               (_) async =>
                   (tracks: const <SimilarTrack>[], previews: <String, String>{}),
+          deezerArtistTracksWithPreviews: deezerWithPreviews,
         );
 
     test('a true similar hit wins and no fallback is called', () async {
@@ -250,6 +327,53 @@ void main() {
       expect(result.similars.single.title, 'Sim Song');
       expect(result.fallbacks.single.title, 'Deezer Song');
       expect(result.fallbackReason, 'More from Obscure Artist');
+    });
+
+    test('Deezer previews join fallbackPreviews (one Deezer call chain)',
+        () async {
+      var deezerCalls = 0;
+      var plainDeezerCalls = 0;
+      final result = await resolve(
+        deezer: (_) async {
+          plainDeezerCalls++;
+          return const [];
+        },
+        deezerWithPreviews: (_) async {
+          deezerCalls++;
+          return (
+            tracks: [_s('Deezer Artist', 'Deezer Song')],
+            previews: {
+              RecommendationEngine.normalizeKey(
+                  'Deezer Artist', 'Deezer Song'): 'https://d.m4a',
+            },
+          );
+        },
+      );
+      expect(result.fallbacks.single.title, 'Deezer Song');
+      expect(
+          result.fallbackPreviews[RecommendationEngine.normalizeKey(
+              'Deezer Artist', 'Deezer Song')],
+          'https://d.m4a');
+      // The with-previews variant replaces the plain chain, not adds
+      // a second one.
+      expect(deezerCalls, 1);
+      expect(plainDeezerCalls, 0);
+    });
+
+    test('iTunes preview wins a key conflict with Deezer', () async {
+      final key =
+          RecommendationEngine.normalizeKey('Same Artist', 'Same Song');
+      final result = await resolve(
+        deezerWithPreviews: (_) async => (
+          tracks: [_s('Same Artist', 'Same Song')],
+          previews: {key: 'https://deezer.m4a'},
+        ),
+        itunes: (_) async => (
+          tracks: [_s('Same Artist', 'Same Song')],
+          previews: {key: 'https://itunes.m4a'},
+        ),
+      );
+      expect(result.fallbackPreviews[key], 'https://itunes.m4a');
     });
 
     test('a non-6 Last.fm error still aborts', () async {
@@ -350,6 +474,32 @@ class _CannedAdapter implements HttpClientAdapter {
     final method = options.queryParameters['method'] as String? ?? '';
     return ResponseBody.fromString(
       jsonEncode(respond(method)),
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+/// Answers with the payload [respond] builds for the request URL
+/// (used for Deezer, which has no Last.fm-style method parameter).
+class _UrlCannedAdapter implements HttpClientAdapter {
+  final Map<String, dynamic> Function(RequestOptions options) respond;
+  _UrlCannedAdapter(this.respond);
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    await requestStream?.drain<void>();
+    return ResponseBody.fromString(
+      jsonEncode(respond(options)),
       200,
       headers: {
         Headers.contentTypeHeader: ['application/json'],

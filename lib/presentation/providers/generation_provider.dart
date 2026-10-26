@@ -290,6 +290,8 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
               _lfm.getArtistTopTracks(a, limit: limit),
           getSimilarArtists: (a) => _lfm.getSimilarArtists(a),
           deezerArtistTracks: _fallbacks.deezerArtistTracks,
+          deezerArtistTracksWithPreviews:
+              _fallbacks.deezerArtistTracksWithPreviews,
           itunesArtistTracksWithPreviews:
               _fallbacks.itunesArtistTracksWithPreviews,
         );
@@ -717,8 +719,13 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
 
   AudioPlayerNotifier(this._fallbacks, [AudioPlayer? player])
       : _player = player ?? AudioPlayer(),
-        super(const AsyncValue.data(null)) {
-    _stateSub = _player.onPlayerStateChanged.listen((playerState) {
+        super(const AsyncValue.data(null));
+
+  /// Subscribe to completion events lazily, only when audio actually
+  /// plays, so constructing the notifier (and resolving a preview that
+  /// turns out not to exist) never touches platform channels.
+  void _ensureStateSub() {
+    _stateSub ??= _player.onPlayerStateChanged.listen((playerState) {
       if (playerState == PlayerState.completed && _playingKey != null) {
         _playingKey = null;
         state = const AsyncValue.data(null);
@@ -786,6 +793,7 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
       return;
     }
     // Stop any other track, then play this one.
+    _ensureStateSub();
     await _player.stop();
     await _player.play(UrlSource(preview));
     _playingKey = key;
