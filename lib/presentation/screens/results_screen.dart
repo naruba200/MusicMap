@@ -18,6 +18,7 @@ import '../widgets/favorite_button.dart';
 import '../widgets/outbound_sheet.dart';
 import '../widgets/youtube_export_sheet.dart';
 import 'album_detail_screen.dart';
+import 'lyrics_screen.dart';
 
 /// Session cache for lazily fetched album art (FR-11): key → image URL
 /// (null = looked up, none found).
@@ -246,6 +247,14 @@ class _SongRow extends StatelessWidget {
         children: [
           FavoriteButton(track: track),
           _PreviewButton(track: track),
+          IconButton(
+            icon: const Icon(Icons.lyrics_outlined),
+            tooltip: 'Lyrics',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                  builder: (_) => LyricsScreen(track: track)),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.open_in_new),
             tooltip: 'Open in…',
