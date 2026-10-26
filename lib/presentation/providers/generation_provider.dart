@@ -13,6 +13,7 @@ import '../../core/constants.dart';
 import '../../data/engine/recommendation_engine.dart';
 import '../../data/enrichment/album_enrichment.dart';
 import '../../data/enrichment/discogs_client.dart';
+import '../../data/enrichment/theaudiodb_client.dart';
 import '../../data/enrichment/enrichment_cache.dart';
 import '../../data/enrichment/enrichment_models.dart';
 import '../../data/enrichment/musicbrainz_client.dart';
@@ -215,6 +216,11 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   /// Pass a user-supplied token here only if the user provides one
   /// (never commit a real token); null keeps token-free resolution.
   late final DiscogsClient _discogs = DiscogsClient();
+
+  /// TheAudioDB enrichment: documented public test key by default.
+  /// Replace with a personal key only if the user supplies one
+  /// (never commit a personal key).
+  late final TheAudioDBClient _theAudioDb = TheAudioDBClient();
   bool _cancelled = false;
 
   GenerationNotifier(this._dio, this._history, this._favorites)
@@ -687,8 +693,14 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       if (_cancelled) return _abort();
       // 7. Discogs album enrichment: top 5 albums only, cached
       // 30 days. Annotates only, never rescores.
-      final albumEnrichments =
+      var albumEnrichments =
           await _enrichTopAlbums(albums, enrichments);
+      if (_cancelled) return _abort();
+      // 8. TheAudioDB album enrichment: artwork + discography,
+      // merged into the Discogs map. Annotates only, never drops
+      // existing entries.
+      albumEnrichments = await _enrichTopAlbumsTadb(
+          albums, albumEnrichments, enrichments);
       if (_cancelled) return _abort();
       // Sparse-result explanation (Phase 1): when the sources ran dry
       // and the list came up short, say so instead of silently
@@ -776,8 +788,12 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       final enrichments = await _enrichTopTracks(songs);
       if (_cancelled) return _abort();
       // Discogs album enrichment, as in the playlist path.
-      final albumEnrichments =
+      var albumEnrichments =
           await _enrichTopAlbums(albums, enrichments);
+      if (_cancelled) return _abort();
+      // TheAudioDB album enrichment, as in the playlist path.
+      albumEnrichments = await _enrichTopAlbumsTadb(
+          albums, albumEnrichments, enrichments);
       if (_cancelled) return _abort();
 
       await _finishRun(
@@ -800,6 +816,30 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       state = GenerationState(error: e.message, canRetry: true);
     } catch (e) {
       state = GenerationState(error: 'Something went wrong: $e', canRetry: true);
+    }
+  }
+
+  /// Post-score TheAudioDB enrichment for a run's top albums.
+  /// Merges artwork + discography into the Discogs map; never
+  /// drops existing entries. Any failure returns the input map.
+  Future<Map<String, AlbumEnrichment>> _enrichTopAlbumsTadb(
+      List<AlbumRec> albums,
+      Map<String, AlbumEnrichment> existing,
+      Map<String, TrackEnrichment> trackEnrichments) async {
+    try {
+      _setProgress('Enriching top albums (TheAudioDB)', 0, 1);
+      TheAudioDBAlbumCache? cache;
+      try {
+        cache = await TheAudioDBAlbumCache.open();
+      } catch (_) {
+        cache = null;
+      }
+      final out = await TheAudioDBEnricher(_theAudioDb, cache)
+          .enrichAlbums(albums, existing, trackEnrichments);
+      _setProgress('Enriching top albums (TheAudioDB)', 1, 1);
+      return out;
+    } catch (_) {
+      return existing;
     }
   }
 

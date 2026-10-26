@@ -330,6 +330,19 @@ class _AlbumCard extends ConsumerWidget {
         enrichmentLine = 'Discogs: ${parts.join(' • ')}';
       }
     }
+    // TheAudioDB lines: discography, plus an artwork credit when
+    // the card art itself comes from TheAudioDB (see _AlbumArt).
+    String? tadbLine;
+    final usesTadbArt = (album.artUrl == null || album.artUrl!.isEmpty) &&
+        e != null &&
+        ((e.artUrl != null && e.artUrl!.isNotEmpty) ||
+            (e.artistThumbUrl != null && e.artistThumbUrl!.isNotEmpty));
+    if (e != null &&
+        e.sources.contains('TheAudioDB') &&
+        e.discography.isNotEmpty) {
+      tadbLine = 'More from ${album.artist} (TheAudioDB): '
+          '${e.discography.take(3).join(', ')}';
+    }
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: InkWell(
@@ -342,7 +355,8 @@ class _AlbumCard extends ConsumerWidget {
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              _AlbumArt(album: album, size: 72),
+              _AlbumArt(
+                  album: album, size: 72, enrichment: enrichment),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -365,6 +379,22 @@ class _AlbumCard extends ConsumerWidget {
                       const SizedBox(height: 4),
                       Text(enrichmentLine,
                           maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant)),
+                    ],
+                    if (tadbLine != null) ...[
+                      const SizedBox(height: 4),
+                      Text(tadbLine,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant)),
+                    ],
+                    if (usesTadbArt) ...[
+                      const SizedBox(height: 4),
+                      Text('Artwork: TheAudioDB',
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant)),
@@ -406,11 +436,18 @@ class _AlbumCard extends ConsumerWidget {
 
 /// Album art with lazy Last.fm fill (FR-11): shows cached art, else fetches
 /// track.getInfo for the top recommended song once and caches the result.
+/// TheAudioDB art (Phase 2, step 3) is the last fallback, after Last.fm:
+/// generation-time Last.fm art wins, and when enrichment art exists the
+/// lazy fetch is skipped so the card shows art immediately.
 class _AlbumArt extends ConsumerStatefulWidget {
   final AlbumRec album;
   final double size;
 
-  const _AlbumArt({required this.album, required this.size});
+  /// TheAudioDB annotation for this album, if enrichment found one.
+  final AlbumEnrichment? enrichment;
+
+  const _AlbumArt(
+      {required this.album, required this.size, this.enrichment});
 
   @override
   ConsumerState<_AlbumArt> createState() => _AlbumArtState();
@@ -422,7 +459,13 @@ class _AlbumArtState extends ConsumerState<_AlbumArt> {
   @override
   void initState() {
     super.initState();
-    if (widget.album.artUrl == null || widget.album.artUrl!.isEmpty) {
+    final enrichArt = widget.enrichment?.artUrl;
+    final enrichThumb = widget.enrichment?.artistThumbUrl;
+    final hasEnrichArt =
+        (enrichArt != null && enrichArt.isNotEmpty) ||
+            (enrichThumb != null && enrichThumb.isNotEmpty);
+    if ((widget.album.artUrl == null || widget.album.artUrl!.isEmpty) &&
+        !hasEnrichArt) {
       _fetching = true;
       Future.microtask(_fetchArt);
     }
@@ -457,7 +500,9 @@ class _AlbumArtState extends ConsumerState<_AlbumArt> {
     final cached = ref.watch(_albumArtCacheProvider)[key];
     final url = (widget.album.artUrl?.isNotEmpty ?? false)
         ? widget.album.artUrl
-        : cached;
+        : cached ??
+            widget.enrichment?.artUrl ??
+            widget.enrichment?.artistThumbUrl;
     return ClipRRect(
       borderRadius: BorderRadius.circular(8),
       child: SizedBox(
