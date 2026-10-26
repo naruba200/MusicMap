@@ -10,7 +10,7 @@ plain-English explanations of *why* each pick fits your taste.
 
 - **Playlist intake** — paste a Deezer or YouTube Music link; 500+ track
   playlists load fully (paginated, virtualized list). YouTube Music is
-  beta (~100 tracks per playlist).
+  beta, but full playlists import with no key (see below).
 - **Recommendation engine** — Last.fm-powered scoring (rank-decay,
   genre/mood boosts, fresh-finds): 30–150 songs and 5–30 albums per run,
   each with an explanation.
@@ -68,6 +68,21 @@ share intents is Android-only and is skipped on desktop.
 - **Last.fm**: free API key (spec §10) in `lastFmApiKey`
   (`lib/core/constants.dart`). Free-tier, revocable — never commit a paid
   key.
+- **YouTube Music full playlists (Phase 4a)**: no key needed. The
+  WEB_REMIX client caps a playlist shelf at 100 tracks and its
+  continuation token dead-ends, so the adapter now also walks the same
+  playlist via the TVHTML5 client (15 tracks/page, no auth) and merges
+  by videoId — WEB_REMIX entries keep their richer artist/title
+  columns, TVHTML5 supplies the remainder (titles split on "Artist -
+  Title"). Verified live 2026-10-26: DJMax OST 294/294, "Iconic songs
+  of osu!" 346 unique tracks with a clean end (vs 371 in Oct 2024 —
+  most plausibly videos removed/privated since). If the full walk
+  fails or hits its ~1000-track page cap, the import still returns
+  what it got and the detail screen warns that the list stopped early
+  instead of silently truncating. The YouTube Data API v3 route was
+  deliberately not built: the no-key route fully works, so no key
+  setup is required; a Data API key would only arbitrate counts for
+  removed/private videos.
 
 ## Release
 

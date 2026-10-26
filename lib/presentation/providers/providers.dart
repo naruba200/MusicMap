@@ -156,10 +156,15 @@ class PlaylistDetailData {
   final PlaylistInfo info;
   final List<Track> tracks;
 
+  /// True when the import stopped early (see [TrackPage.truncated]):
+  /// the UI says so instead of presenting a partial list as complete.
+  final bool truncated;
+
   PlaylistDetailData({
     required this.platform,
     required this.info,
     required this.tracks,
+    this.truncated = false,
   });
 }
 
@@ -173,15 +178,18 @@ final playlistDetailProvider =
 
   final info = await platform.fetchPlaylistInfo(playlistId);
   final tracks = <Track>[];
+  var truncated = false;
   Object? cursor;
   do {
     final page =
         await platform.fetchPlaylistTracks(playlistId, cursor: cursor);
     tracks.addAll(page.tracks);
+    truncated = truncated || page.truncated;
     cursor = page.hasMore ? page.cursor : null;
   } while (cursor != null);
 
-  return PlaylistDetailData(platform: platform, info: info, tracks: tracks);
+  return PlaylistDetailData(
+      platform: platform, info: info, tracks: tracks, truncated: truncated);
 });
 
 // -- Saved playlists --------------------------------------------------------
@@ -210,13 +218,23 @@ class SavedPlaylistsNotifier extends StateNotifier<List<SavedPlaylist>> {
   /// Re-fetches a saved playlist and returns the number of new tracks.
   Future<int> rescan(MusicPlatform platform, SavedPlaylist saved) async {
     final tracks = <Track>[];
+    var truncated = false;
     Object? cursor;
     do {
       final page =
           await platform.fetchPlaylistTracks(saved.info.id, cursor: cursor);
       tracks.addAll(page.tracks);
+      truncated = truncated || page.truncated;
       cursor = page.hasMore ? page.cursor : null;
     } while (cursor != null);
+
+    // Never let a cut-short import shrink a saved full playlist: leave
+    // the saved copy untouched and tell the user to retry.
+    if (truncated) {
+      throw const PlatformException(
+          'Could not load the full playlist — the saved copy was left '
+          'unchanged. Try the rescan again.');
+    }
 
     final known = saved.tracks
         .map((t) => '${t.artist}::${t.title}'.toLowerCase())

@@ -281,6 +281,32 @@ class _PlaylistDetailScreenState
                     '${saved != null ? ' · scanned ${timeAgo(saved.lastScannedAt)}' : ''}',
                     style: theme.textTheme.bodySmall,
                   ),
+                  // Phase 4a: the import stopped early (e.g. YouTube
+                  // Music's 100-track shelf cap with a dead-end
+                  // continuation). Say so plainly instead of presenting
+                  // a partial list as the whole playlist.
+                  if (data.truncated)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.warning_amber,
+                              size: 16,
+                              color: theme.colorScheme.tertiary),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Only the first 100 tracks loaded — '
+                              'YouTube Music cut the list short. '
+                              'Reopen this playlist to retry the '
+                              'full import.',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
