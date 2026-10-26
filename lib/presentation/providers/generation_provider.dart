@@ -7,6 +7,7 @@ import 'dart:math';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
@@ -172,12 +173,16 @@ class GenerationState {
 }
 
 final generationProvider =
-    StateNotifierProvider<GenerationNotifier, GenerationState>((ref) => 
+    StateNotifierProvider<GenerationNotifier, GenerationState>((ref) =>
         GenerationNotifier(
             ref.watch(dioProvider),
             ref.watch(historyRepositoryProvider),
             ref.watch(favoritesRepositoryProvider),
-            ref.watch(settingsRepositoryProvider)));
+            ref.watch(settingsRepositoryProvider),
+            // ref.read, not ref.watch: watching the version would
+            // recreate this notifier (and wipe its state) on every
+            // history bump, including the bump _finishRun itself does.
+            ref.read(historyVersionProvider.notifier)));
 
 /// Related genres for a selected genre chip, live via Last.fm tag.getSimilar
 /// with the static fallback map on failure. Cached per genre for the session.
@@ -269,8 +274,13 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   /// check [_isStale] before each publish.
   int _generationRun = 0;
 
+  /// Shared history-version controller (see historyVersionProvider
+  /// in providers.dart). Optional so older constructions still work;
+  /// bumped in [_finishRun] after a history write succeeds.
+  final StateController<int>? _historyVersion;
+
   GenerationNotifier(this._dio, this._history, this._favorites,
-      [this._settingsRepository])
+      [this._settingsRepository, this._historyVersion])
       : super(GenerationState.idle);
 
   LastFmClient get _lfm => LastFmClient(dio: _dio, apiKey: lastFmApiKey);
@@ -1144,8 +1154,16 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         isSurprise: result.isSurprise,
         resultJson: result.toJson(),
       ));
-    } catch (_) {
-      // history is best-effort
+      // Bump the shared version AFTER the write succeeds, so the
+      // History tab (IndexedStack, never rebuilt on tab switch)
+      // re-reads getAll() and shows this run immediately.
+      _historyVersion?.state++;
+    } catch (e) {
+      // History is best-effort: results still display even if the
+      // write fails. But log it, so a real write failure is
+      // distinguishable from the old refresh bug (which looked
+      // identical from the UI: a missing run).
+      debugPrint('History write failed: $e');
     }
     state = GenerationState(result: result);
   }

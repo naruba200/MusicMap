@@ -9,14 +9,12 @@ import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
 import 'results_screen.dart';
 
-final _historyVersionProvider = StateProvider<int>((ref) => 0);
-
 class HistoryScreen extends ConsumerWidget {
   const HistoryScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    ref.watch(_historyVersionProvider);
+    ref.watch(historyVersionProvider);
     final runs = ref.watch(historyRepositoryProvider).getAll();
     return Scaffold(
       appBar: AppBar(
@@ -66,7 +64,7 @@ class HistoryScreen extends ConsumerWidget {
                   ),
                   onDismissed: (_) {
                     ref.read(historyRepositoryProvider).remove(run.id);
-                    ref.read(_historyVersionProvider.notifier).state++;
+                    ref.read(historyVersionProvider.notifier).state++;
                   },
                   child: ListTile(
                     leading: Icon(
@@ -128,7 +126,7 @@ class HistoryScreen extends ConsumerWidget {
     );
     if (confirmed == true) {
       await ref.read(historyRepositoryProvider).clear();
-      ref.read(_historyVersionProvider.notifier).state++;
+      ref.read(historyVersionProvider.notifier).state++;
     }
   }
 }

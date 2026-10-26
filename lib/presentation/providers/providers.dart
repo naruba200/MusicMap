@@ -76,6 +76,13 @@ final historyRepositoryProvider =
 /// Bumped on every favorites mutation so list UIs refresh.
 final favoritesVersionProvider = StateProvider<int>((ref) => 0);
 
+/// Bumped when a generation run is written to history, so the History
+/// tab re-reads getAll(). HistoryScreen lives in an IndexedStack and
+/// is never rebuilt on tab switch, so without this bump a just-written
+/// run never appears until app restart. Moved here from
+/// history_screen.dart so generation can bump it too.
+final historyVersionProvider = StateProvider<int>((ref) => 0);
+
 final favoriteTracksProvider = Provider<List<Track>>((ref) {
   ref.watch(favoritesVersionProvider);
   return ref.watch(favoritesRepositoryProvider).getAll();
