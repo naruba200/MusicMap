@@ -24,10 +24,14 @@ plain-English explanations of *why* each pick fits your taste.
   cache.
 - **Open anywhere** — every song/album links out to Spotify, Deezer,
   YouTube, or YouTube Music (search links, no auth needed).
-- **Discover tab** — separate tabs per new source (Audius first), kept
-  out of core Last.fm scoring. Audius: trending tracks, track/playlist
-  search, playlist import with a "Get recommendations" run, and full
-  streams that play inside the Audius tab only.
+- **Discover tab** — one tab per new source, kept out of core Last.fm
+  scoring. Audius: trending tracks, track/playlist search, playlist
+  import with a "Get recommendations" run, and full streams that play
+  inside the Audius tab only. Jamendo: Creative Commons track search,
+  playlist import, and radios (same in-tab playback). Openwhyd: public
+  playlist import, tracks opening on their original platform. Mixcloud:
+  popular/hot/new shows, show + tag search — a browser only, it never
+  feeds the song generator.
 - **Private by design** — no accounts, no servers, no ads, no tracking.
   Everything lives on your device. ([Privacy policy](docs/privacy.html))
 
@@ -79,6 +83,14 @@ share intents is Android-only and is skipped on desktop.
   https://devportal.jamendo.com, put in `jamendoClientId`
   (`lib/core/constants.dart`) locally — never commit a real id. Until
   it is set, the Jamendo Discover tab shows a setup hint.
+- **Openwhyd (Phase 4)**: no key needed. Public playlists import via
+  the no-auth Data Export API (`?format=json`); the export carries no
+  playlist name, so the tab names imports from their URL. Tracks open
+  on YouTube/SoundCloud/Deezer/Vimeo — no in-app Openwhyd playback.
+- **Mixcloud (Phase 4)**: no key needed for reads. Shows list only and
+  open in Mixcloud; Mixcloud serves streams through its widget/embed,
+  not a public stream URL, so no in-app playback is built and no show
+  is ever converted into a generator seed.
 - **YouTube Music full playlists (Phase 4a)**: no key needed. The
   WEB_REMIX client caps a playlist shelf at 100 tracks and its
   continuation token dead-ends, so the adapter now also walks the same
