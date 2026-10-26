@@ -20,10 +20,18 @@ class TrackPage {
   final bool hasMore;
   final Object? cursor;
 
+  /// True when the platform knows the playlist continues beyond the
+  /// tracks returned so far, but this import stopped early (a dead-end
+  /// continuation, or a page cap hit with more pages pending). The UI
+  /// surfaces this instead of silently truncating. Defaults to false:
+  /// every other platform either pages to the true end or throws.
+  final bool truncated;
+
   const TrackPage({
     required this.tracks,
     required this.hasMore,
     this.cursor,
+    this.truncated = false,
   });
 }
 

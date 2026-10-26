@@ -27,6 +27,28 @@
 // It can break without notice when Google changes the internal API — the UI
 // shows a β badge, and every failure degrades to a clear PlatformException
 // that never breaks the other platforms (per-source isolation).
+//
+// Phase 4a full import (2026-10-26, live Innertube spike, no key, no auth):
+// WEB_REMIX caps a playlist shelf at exactly 100 tracks and its
+// continuation token dead-ends (empty continuation, or a related-content
+// carousel with no tracks). TVHTML5, by contrast, paginates the same
+// playlists 15 tracks per page to the true end — DJMax OST 294/294, and
+// the "Iconic songs of osu!" playlist 346 unique tracks with a clean
+// 15×23+1 page pattern and its first 100 in exactly WEB_REMIX order
+// (346 vs the 371 seen 2026-10-24 is most plausibly videos removed or
+// privated since; TVHTML5 skips unavailable entries). WEB returns no
+// playlist shelf in this shape, and ANDROID / IOS / WEB_EMBEDDED_PLAYER
+// all 400. So the no-key full-import route is: WEB_REMIX first page for
+// its richer artist/title columns, merged with a full TVHTML5 walk
+// (WEB_REMIX entries win on videoId, TVHTML5 supplies the remainder).
+// TVHTML5 tiles carry only a single "Artist - Title" string plus the
+// uploader channel, so remainder tracks split that string (see
+// _splitTitle). Because the no-key route fully works, the YouTube Data
+// API v3 route from the plan is deliberately NOT built (it stays an
+// optional future arbiter for removed/private-video counts, not a
+// requirement). A failed or capped TVHTML5 walk never aborts the import:
+// the WEB_REMIX tracks still return, and [TrackPage.truncated] tells the
+// UI to say so instead of silently truncating.
 
 import 'dart:convert';
 
@@ -46,6 +68,22 @@ class YouTubeMusicPlatform extends MusicPlatform {
   static const _userAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  /// TVHTML5 browse endpoint (www host, not music host) + TV user agent.
+  /// This is the client that paginates full playlists (Phase 4a spike).
+  static const _tvBrowseUrl = 'https://www.youtube.com/youtubei/v1/browse';
+  static const _tvUserAgent =
+      'Mozilla/5.0 (Chromium; TV) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  /// WEB_REMIX serves at most this many tracks on page 1; a full page
+  /// with no usable continuation is the truncation signal.
+  static const _webRemixPageCap = 100;
+
+  /// TVHTML5 serves 15 tracks per page, so this many pages covers ~1000
+  /// tracks — the same sane bound as the plan's 20 Data API pages.
+  /// Hitting it with a token still pending stops cleanly + truncated.
+  static const _maxTvPages = 67;
 
   @override
   String get id => PlatformIds.youTubeMusic;
@@ -104,6 +142,38 @@ class YouTubeMusicPlatform extends MusicPlatform {
           // youtubei browse is a read-only query over POST — opt in to
           // connection retries so TLS-resetting networks recover the way
           // the GET platforms do. Never set this on an OAuth POST.
+          extra: const {'retryReadOnly': true},
+        ),
+      );
+      final data = res.data;
+      if (data is Map<String, dynamic>) return data;
+      throw const PlatformException(
+          'YouTube Music returned an unexpected response.');
+    } on DioException catch (e) {
+      throw PlatformException(_friendlyError(e));
+    }
+  }
+
+  /// TVHTML5 browse call, mirroring [_browse] but on the www host with
+  /// the TV client. Throws [PlatformException] on any Dio failure.
+  Future<Map<String, dynamic>> _browseTv(
+      {String? browseId, String? continuation}) async {
+    try {
+      final res = await _dio.post(
+        _tvBrowseUrl,
+        data: {
+          'context': {
+            'client': {
+              'clientName': 'TVHTML5',
+              'clientVersion': '7.20240111.09.00',
+            },
+          },
+          if (browseId != null) 'browseId': browseId,
+          if (continuation != null) 'continuation': continuation,
+        },
+        options: Options(
+          headers: {'User-Agent': _tvUserAgent},
+          // Same read-only POST reasoning as _browse.
           extra: const {'retryReadOnly': true},
         ),
       );
@@ -192,6 +262,26 @@ class YouTubeMusicPlatform extends MusicPlatform {
       // (following it can also yield non-track sections — the
       // continuation branch below ends paging cleanly then).
       final next = _tokenOf(shelf) ?? _continuationOf(data);
+      // Phase 4a: a full WEB_REMIX page means the shelf probably stopped
+      // at its 100-track cap (its continuation dead-ends — verified
+      // live). Walk the same playlist via TVHTML5 and merge, keeping
+      // the richer WEB_REMIX artist/title entries for their videoIds.
+      // Any TV failure falls through to WEB_REMIX paging exactly as
+      // before: a failed full import never aborts the import.
+      if (tracks.length >= _webRemixPageCap) {
+        try {
+          final tv = await _fetchTvFull(playlistId);
+          if (tv.tracks.isNotEmpty) {
+            return TrackPage(
+              tracks: _mergePreferFirst(tracks, tv.tracks),
+              hasMore: false,
+              truncated: !tv.complete,
+            );
+          }
+        } catch (_) {
+          // Fall through to the WEB_REMIX page below.
+        }
+      }
       return TrackPage(
           tracks: tracks,
           hasMore: next != null && tracks.isNotEmpty,
@@ -225,7 +315,132 @@ class YouTubeMusicPlatform extends MusicPlatform {
             cursor: next);
       }
     }
-    return const TrackPage(tracks: [], hasMore: false);
+    // Empty continuation: the known WEB_REMIX dead-end (token existed
+    // but yielded no tracks — an empty continuation, or only carousels).
+    // This is NOT a normal end: a genuinely finished shelf ends with a
+    // page of tracks and no token, never with an empty page. Flag it so
+    // the UI says the import stopped early instead of silently showing
+    // the first 100 tracks as if that were the whole playlist.
+    return const TrackPage(tracks: [], hasMore: false, truncated: true);
+  }
+
+  /// Walks a playlist end to end via the TVHTML5 client (15 tracks per
+  /// page). Returns the tracks in playlist order plus whether the walk
+  /// ran to the true end ([complete] is false when the page cap was hit
+  /// with a token still pending). Throws on any page failure — the
+  /// caller falls back to WEB_REMIX paging.
+  Future<({List<Track> tracks, bool complete})> _fetchTvFull(
+      String playlistId) async {
+    final tracks = <Track>[];
+    final seen = <String>{};
+    var data = await _browseTv(browseId: 'VL$playlistId');
+    var node = _findRenderer(data, 'playlistVideoListRenderer');
+    var pages = 0;
+    while (node != null) {
+      pages++;
+      for (final t in _tvTracksOf(node)) {
+        final key = t.platformTrackId ??
+            '${t.artist}::${t.title}'.toLowerCase();
+        if (key.isNotEmpty && seen.add(key)) tracks.add(t);
+      }
+      final token = _tokenOf(node);
+      if (token == null) return (tracks: tracks, complete: true);
+      if (pages >= _maxTvPages) {
+        return (tracks: tracks, complete: false);
+      }
+      data = await _browseTv(continuation: token);
+      node = _asMap(_dig(
+          data, ['continuationContents', 'playlistVideoListContinuation']));
+      if (node == null) {
+        // Token existed but the continuation carried no list: the walk
+        // stopped early, not at a clean end.
+        return (tracks: tracks, complete: false);
+      }
+    }
+    return (tracks: tracks, complete: true);
+  }
+
+  /// Tracks from one TVHTML5 playlistVideoListRenderer page: tile
+  /// entries only (continuation/carousel entries carry no track).
+  List<Track> _tvTracksOf(Map<String, dynamic> node) {
+    final out = <Track>[];
+    final contents = node['contents'];
+    if (contents is! List) return out;
+    for (final item in contents) {
+      if (item is! Map<String, dynamic>) continue;
+      final tile = _asMap(item['tileRenderer']);
+      if (tile == null) continue;
+      final endpoint =
+          _asMap(_dig(tile, ['onSelectCommand', 'watchEndpoint']));
+      final vidRaw = endpoint?['videoId'];
+      final contentId = tile['contentId'];
+      final videoId = vidRaw is String
+          ? vidRaw
+          : (contentId is String ? contentId : null);
+      final title = _tileTitle(tile);
+      if (title == null || title.isEmpty) continue;
+      final split = _splitTitle(title);
+      out.add(Track(
+        title: split.title,
+        artist: split.artist,
+        platformTrackId:
+            (videoId != null && videoId.isNotEmpty) ? videoId : null,
+      ));
+    }
+    return out;
+  }
+
+  /// A tile's title: simpleText when present, else the first text run.
+  String? _tileTitle(Map<String, dynamic> tile) {
+    final titleNode =
+        _asMap(_dig(tile, ['metadata', 'tileMetadataRenderer', 'title']));
+    if (titleNode == null) return null;
+    final simple = titleNode['simpleText'];
+    if (simple is String && simple.isNotEmpty) return simple;
+    final runs = titleNode['runs'];
+    if (runs is List && runs.isNotEmpty && runs.first is Map) {
+      final text = (runs.first as Map)['text'];
+      if (text is String && text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
+  /// Splits a TVHTML5 single-string title ("Artist - Title") on the
+  /// FIRST separator. Titles without a separator keep the whole string
+  /// as the title with an unknown artist — never invent an artist.
+  ({String artist, String title}) _splitTitle(String title) {
+    for (final sep in [' - ', ' \u2013 ', ' \u2014 ']) {
+      final idx = title.indexOf(sep);
+      if (idx > 0 && idx + sep.length < title.length) {
+        final artist = title.substring(0, idx).trim();
+        final rest = title.substring(idx + sep.length).trim();
+        if (artist.isNotEmpty && rest.isNotEmpty) {
+          return (artist: artist, title: rest);
+        }
+      }
+    }
+    return (artist: 'Unknown artist', title: title);
+  }
+
+  /// Merges two track lists in order, deduplicating by videoId (or by
+  /// artist::title when a track has none). Entries from [first] win:
+  /// the WEB_REMIX columns carry a real artist field, while TVHTML5
+  /// remainder tracks only have a split title string.
+  List<Track> _mergePreferFirst(List<Track> first, List<Track> second) {
+    final seen = <String>{};
+    final out = <Track>[];
+    for (final t in [...first, ...second]) {
+      final id = t.platformTrackId;
+      final key = (id != null && id.isNotEmpty)
+          ? id
+          : '${t.artist}::${t.title}'.toLowerCase();
+      if (key.isEmpty) {
+        out.add(t);
+      } else if (seen.add(key)) {
+        out.add(t);
+      }
+    }
+    return out;
   }
 
   /// A renderer node's own continuation token, if it carries one.
@@ -245,6 +460,26 @@ class YouTubeMusicPlatform extends MusicPlatform {
       if (entry is Map<String, dynamic>) {
         final shelf = _asMap(entry['musicPlaylistShelfRenderer']);
         if (shelf != null) return shelf;
+      }
+    }
+    return null;
+  }
+
+  /// First map node anywhere under [root] carrying [key] (TVHTML5 nests
+  /// the playlist list deep inside tvBrowseRenderer/twoColumnRenderer).
+  /// Returns null when the key never appears.
+  Map<String, dynamic>? _findRenderer(dynamic root, String key) {
+    if (root is Map<String, dynamic>) {
+      final direct = root[key];
+      if (direct is Map<String, dynamic>) return direct;
+      for (final value in root.values) {
+        final found = _findRenderer(value, key);
+        if (found != null) return found;
+      }
+    } else if (root is List) {
+      for (final value in root) {
+        final found = _findRenderer(value, key);
+        if (found != null) return found;
       }
     }
     return null;
