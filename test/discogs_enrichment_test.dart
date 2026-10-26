@@ -156,7 +156,7 @@ void main() {
           artist: 'Test Artist',
           songCount: 1,
           bestScore: 1.0,
-          songs: const [
+          songs: [
             ScoredTrack(
               track: Track(artist: 'Test Artist', title: 'Test Song'),
               score: 1.0,
