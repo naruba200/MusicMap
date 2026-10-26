@@ -73,6 +73,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             },
           ),
           const Divider(),
+          _sectionHeader('ListenBrainz'),
+          ListTile(
+            leading: const Icon(Icons.music_note_outlined),
+            title: const Text('ListenBrainz username'),
+            subtitle: Text(settingsRepo.listenBrainzUsername == null
+                ? 'Not set — ListenBrainz stays off'
+                : 'Recommendations for ${settingsRepo.listenBrainzUsername} '
+                    'join results as "From ListenBrainz"'),
+            trailing: const Icon(Icons.edit_outlined),
+            onTap: _editListenBrainzUsername,
+          ),
+          const Divider(),
           _sectionHeader('Data'),
           ListTile(
             leading: const Icon(Icons.ios_share_outlined),
@@ -192,6 +204,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// Phase 3: optional ListenBrainz username. Blank saves as cleared,
+  /// which turns the whole ListenBrainz layer off (no key, no sign-in).
+  Future<void> _editListenBrainzUsername() async {
+    final repo = ref.read(settingsRepositoryProvider);
+    final controller =
+        TextEditingController(text: repo.listenBrainzUsername ?? '');
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('ListenBrainz username'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: 'e.g. your-listenbrainz-name',
+            helperText: 'Optional. Public recommendations only — '
+                'no key, no sign-in. Leave blank to turn it off.',
+          ),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => Navigator.of(ctx).pop(true),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              await repo.setListenBrainzUsername(controller.text);
+              if (ctx.mounted) Navigator.of(ctx).pop(true);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (saved == true && mounted) setState(() {});
+  }
+
   /// FR-14b: one JSON bundle via the Android share sheet.
   Future<void> _exportData() async {
     setState(() => _exporting = true);
@@ -209,6 +259,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ref.read(settingsRepositoryProvider).selectedPlatformId,
           'songCount': ref.read(settingsRepositoryProvider).songCount,
           'albumCount': ref.read(settingsRepositoryProvider).albumCount,
+          'listenBrainzUsername':
+              ref.read(settingsRepositoryProvider).listenBrainzUsername,
         },
       };
       final dir = await getTemporaryDirectory();

@@ -27,4 +27,21 @@ class SettingsRepository {
   int get albumCount =>
       _box.get('albumCount', defaultValue: defaultAlbumCount) as int;
   Future<void> setDefaultAlbumCount(int n) => _box.put('albumCount', n);
+
+  /// Optional ListenBrainz username (Phase 3). Null when unset or
+  /// blank — the ListenBrainz layer is completely inactive then.
+  /// No key, no OAuth: only public recommendation data is read.
+  String? get listenBrainzUsername {
+    final value = _box.get('listenBrainzUsername');
+    if (value is! String) return null;
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  /// Save a username, or clear it (null / blank deletes the key).
+  Future<void> setListenBrainzUsername(String? username) {
+    final trimmed = username?.trim() ?? '';
+    if (trimmed.isEmpty) return _box.delete('listenBrainzUsername');
+    return _box.put('listenBrainzUsername', trimmed);
+  }
 }
