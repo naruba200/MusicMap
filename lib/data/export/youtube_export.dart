@@ -203,7 +203,10 @@ class YouTubeVideoResolver {
     return ExportResolution(songs: out);
   }
 
-  Future<String?> _search(String query) async {
+  /// Raw youtubei search envelope, or null. Shared by [_search]
+  /// (export path, videoId only) and [resolveVideoWithTitle]
+  /// (full-song path, videoId + title) so the POST logic lives once.
+  Future<Map<String, dynamic>?> _searchRaw(String query) async {
     final res = await _dio.post(
       _searchUrl,
       data: {
@@ -224,13 +227,29 @@ class YouTubeVideoResolver {
       ),
     );
     final data = res.data;
-    final map = data is Map<String, dynamic>
-        ? data
-        : (data is String
-            ? jsonDecode(data) as Map<String, dynamic>
-            : null);
+    if (data is Map<String, dynamic>) return data;
+    if (data is String) return jsonDecode(data) as Map<String, dynamic>;
+    return null;
+  }
+
+  Future<String?> _search(String query) async {
+    final map = await _searchRaw(query);
     if (map == null) return null;
     return parseSearchVideoId(map);
+  }
+
+  /// Top video WITH its displayed title, for strict full-song
+  /// matching. The plain [resolve] deliberately returns only a videoId
+  /// (export matching is best-effort, spec GAP-2); full-song matching
+  /// must verify the title, so it needs this pair. Intentionally
+  /// bypasses the export [VideoIdCache]: a full-song lookup must
+  /// neither be blocked by an export miss TTL nor poison the export
+  /// cache with an unchecked id.
+  Future<({String videoId, String title})?> resolveVideoWithTitle(
+      Track track) async {
+    final map = await _searchRaw('${track.artist} ${track.title}');
+    if (map == null) return null;
+    return parseSearchVideo(map);
   }
 
   /// Extracts the top video ID from a youtubei search envelope: the card
@@ -270,6 +289,92 @@ class YouTubeVideoResolver {
         if (id != null) return id;
       }
     }
+    return null;
+  }
+
+  /// Top video with its displayed title: the music-card title + its
+  /// navigation videoId first, then the first shelf/list item carrying
+  /// both a videoId and a displayed title. Returns null when no item
+  /// carries both — a videoId without a verifiable title can never
+  /// pass full-song strict matching, so it is not returned here.
+  static ({String videoId, String title})? parseSearchVideo(
+      Map<String, dynamic> data) {
+    final card = _asMap(_dig(data, [
+      'contents',
+      'tabbedSearchResultsRenderer',
+      'tabs',
+      0,
+      'tabRenderer',
+      'content',
+      'sectionListRenderer',
+      'contents',
+      0,
+      'musicCardShelfRenderer',
+    ]));
+    if (card != null) {
+      final title = _dig(card, ['title', 'runs', 0, 'text']);
+      final id = _deepVideoId(
+          _dig(card, ['title', 'runs', 0, 'navigationEndpoint']));
+      if (id != null && title is String && title.trim().isNotEmpty) {
+        return (videoId: id, title: title.trim());
+      }
+    }
+    final contents = _dig(data, [
+      'contents',
+      'tabbedSearchResultsRenderer',
+      'tabs',
+      0,
+      'tabRenderer',
+      'content',
+      'sectionListRenderer',
+      'contents',
+    ]);
+    if (contents is List) {
+      for (final entry in contents) {
+        final id = _shelfVideoId(entry);
+        final title = _shelfTitle(entry);
+        if (id != null && title != null) {
+          return (videoId: id, title: title);
+        }
+      }
+    }
+    return null;
+  }
+
+  /// Displayed title of a shelf / list-item node: the first flex
+  /// column's first run, which is the track title in a
+  /// musicResponsiveListItemRenderer. Returns null when the shape is
+  /// not recognised, rather than guessing a title.
+  static String? _shelfTitle(dynamic node) {
+    if (node is! Map) return null;
+    Map? renderer;
+    final direct = node['musicResponsiveListItemRenderer'];
+    if (direct is Map) {
+      renderer = direct;
+    } else {
+      final shelf = node['musicShelfRenderer'];
+      if (shelf is Map) {
+        final contents = shelf['contents'];
+        if (contents is List && contents.isNotEmpty) {
+          final first = contents.first;
+          if (first is Map) {
+            final wrapped = first['musicResponsiveListItemRenderer'];
+            renderer = wrapped is Map ? wrapped : first;
+          }
+        }
+      }
+    }
+    if (renderer == null) return null;
+    final title = _dig(renderer, [
+      'flexColumns',
+      0,
+      'musicResponsiveListItemFlexColumnRenderer',
+      'text',
+      'runs',
+      0,
+      'text',
+    ]);
+    if (title is String && title.trim().isNotEmpty) return title.trim();
     return null;
   }
 

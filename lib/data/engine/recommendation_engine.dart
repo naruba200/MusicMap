@@ -136,6 +136,25 @@ class RecommendationEngine {
     return t.isEmpty ? title.trim() : t;
   }
 
+  /// Whether an artist string is unusable for matching: empty, or the
+  /// parser's "Unknown artist" fallback (see the YTM intake). A polluted
+  /// artist must never veto an otherwise exact title match — that is
+  /// the YTM case the full-song race exists for.
+  static bool isPollutedArtist(String artist) {
+    final a = artist.trim().toLowerCase();
+    return a.isEmpty || a == 'unknown artist' || a == 'unknown';
+  }
+
+  /// First word of the primary artist ("A feat. B" -> "A" -> "a"),
+  /// for artist-word matching. Empty when there is no usable word.
+  static String artistFirstWord(String artist) {
+    final primary = primaryArtist(artist);
+    for (final word in primary.split(' ')) {
+      if (word.isNotEmpty) return word;
+    }
+    return '';
+  }
+
   /// Seed selection (FR-05): drop unusable, dedupe, sample evenly, S formula.
   static SeedSelection selectSeeds(List<Track> tracks) {
     final seen = <String>{};

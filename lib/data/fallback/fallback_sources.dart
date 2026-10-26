@@ -383,6 +383,106 @@ class FallbackSources {
     }
     return null;
   }
+  /// Strict link match for the full-song race (see
+  /// full_song_resolver.dart): the cleaned result title MUST equal the
+  /// cleaned wanted title, and — only when the wanted artist is clean
+  /// (not polluted) — the result artist must contain the primary
+  /// artist's first word. There is deliberately NO first-result
+  /// fallback here: a loose link would play the wrong song as a
+  /// "full song".
+  bool _strictLinkMatch(
+      String resultArtist, String resultTitle, String artist, String title) {
+    if (!_cleanTitleEquals(resultTitle, title)) return false;
+    if (RecommendationEngine.isPollutedArtist(artist)) return true;
+    final first =
+        RecommendationEngine.artistFirstWord(artist).toLowerCase();
+    if (first.isEmpty) return true;
+    return resultArtist.toLowerCase().contains(first);
+  }
+
+  /// Queries for a link lookup: the artist+title query first, then the
+  /// title-only candidates (full, cleaned, artist-prefix-stripped),
+  /// deduplicated in order. The title-only queries are what make the
+  /// lookup work for polluted YTM artists.
+  List<String> _linkQueries(String artist, String title) {
+    final queries = <String>[];
+    void add(String q) {
+      final v = q.trim();
+      if (v.isNotEmpty && !queries.contains(v)) queries.add(v);
+    }
+
+    add('$artist $title');
+    for (final c in _titleSearchCandidates(artist, title)) {
+      add(c);
+    }
+    return queries;
+  }
+
+  /// iTunes track page link (`trackViewUrl`) for a strict match, or
+  /// null. Failures return null, never throw.
+  Future<String?> itunesTrackLink(String artist, String title) async {
+    for (final q in _linkQueries(artist, title)) {
+      try {
+        final res = await _dio.get(
+          'https://itunes.apple.com/search',
+          queryParameters: {
+            'term': q,
+            'media': 'music',
+            'entity': 'song',
+            'limit': 5,
+          },
+        );
+        for (final item in _asMapList(_asMap(res.data)['results'])) {
+          final itemArtist = (item['artistName'] as String?)?.trim() ?? '';
+          final itemTitle = (item['trackName'] as String?)?.trim() ?? '';
+          final link = (item['trackViewUrl'] as String?)?.trim();
+          if (itemArtist.isEmpty ||
+              itemTitle.isEmpty ||
+              link == null ||
+              link.isEmpty) {
+            continue;
+          }
+          if (_strictLinkMatch(itemArtist, itemTitle, artist, title)) {
+            return link;
+          }
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  /// Deezer track page link (`link` field) for a strict match, or
+  /// null. Failures (including a sinkholed Deezer host) return null,
+  /// never throw.
+  Future<String?> deezerTrackLink(String artist, String title) async {
+    for (final q in _linkQueries(artist, title)) {
+      try {
+        final res = await _dio.get(
+          'https://api.deezer.com/search',
+          queryParameters: {'q': q, 'limit': 5},
+        );
+        for (final item in _asMapList(_asMap(res.data)['data'])) {
+          final itemArtist = _artistName(item['artist']) ?? '';
+          final itemTitle = (item['title'] as String?)?.trim() ?? '';
+          final link = (item['link'] as String?)?.trim();
+          if (itemArtist.isEmpty ||
+              itemTitle.isEmpty ||
+              link == null ||
+              link.isEmpty) {
+            continue;
+          }
+          if (_strictLinkMatch(itemArtist, itemTitle, artist, title)) {
+            return link;
+          }
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    return null;
+  }
 }
 
 /// Result of resolving one seed. [similars] are Last.fm track.getSimilar
