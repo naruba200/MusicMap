@@ -174,7 +174,7 @@ final jamendoPlaylistProvider =
     return PlaylistLoad(info: data.info, tracks: data.tracks);
   } catch (_) {
     return const PlaylistLoad(
-        error: 'Couldn't import that Jamendo playlist — '
+        error: 'Couldn\'t import that Jamendo playlist — '
             'check the link and your connection.');
   }
 });
@@ -190,7 +190,7 @@ final jamendoRadiosProvider =
     return DiscoverLoad(items: radios);
   } catch (_) {
     return const DiscoverLoad(
-        items: [], error: 'Couldn't load Jamendo radios.');
+        items: [], error: 'Couldn\'t load Jamendo radios.');
   }
 });
 

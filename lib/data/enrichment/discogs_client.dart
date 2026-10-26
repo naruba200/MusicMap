@@ -248,7 +248,7 @@ class DiscogsEnricher {
         }
         if (!cache.shouldRetry(key, DateTime.now())) continue;
       }
-      final releaseId = await _resolveReleaseId(album);
+      final releaseId = await _resolveReleaseId(album, trackEnrichments);
       if (releaseId == null) {
         cache?.storeMiss(key);
         continue;
@@ -265,7 +265,7 @@ class DiscogsEnricher {
     return out;
   }
 
-  Future<int?> _resolveReleaseId(AlbumRec album) async {
+  Future<int?> _resolveReleaseId(AlbumRec album, Map<String, TrackEnrichment> trackEnrichments) async {
     final tokenId =
         await _client.searchRelease(album.artist, album.name);
     if (tokenId != null) return tokenId;

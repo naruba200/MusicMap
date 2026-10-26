@@ -416,6 +416,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         if (lbTracks.isNotEmpty) {
           final lbScored = RecommendationEngine.scoreCandidates(
             seeds: selection.seeds,
+            similarBySeed: const {},
             fallbackBySeed: {0: lbTracks},
             fallbackReasonBySeed: {0: 'From ListenBrainz'},
           );

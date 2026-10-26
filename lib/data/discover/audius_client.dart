@@ -21,7 +21,7 @@
 import 'package:dio/dio.dart';
 
 import '../models/music_models.dart';
-import 'music_platform.dart';
+import '../platforms/music_platform.dart';
 
 /// One Audius playlist: metadata + its tracks in playlist order.
 class AudiusPlaylistData {
@@ -133,11 +133,11 @@ class AudiusClient {
     );
     final data = (res.data as Map?)?['data'];
     if (data is List) {
-      if (data.isEmpty) throw const PlatformException('Audius: playlist not found');
+      if (data.isEmpty) throw PlatformException('Audius: playlist not found');
       return _playlistFromJson(data.first as Map, host);
     }
     if (data is Map) return _playlistFromJson(data, host);
-    throw const PlatformException('Audius: playlist not found');
+    throw PlatformException('Audius: playlist not found');
   }
 
   Future<AudiusPlaylistData> _playlistFromJson(

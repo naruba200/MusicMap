@@ -18,7 +18,7 @@
 import 'package:dio/dio.dart';
 
 import '../models/music_models.dart';
-import 'music_platform.dart';
+import '../platforms/music_platform.dart';
 
 /// One Openwhyd playlist: metadata + its tracks in export order.
 class OpenwhydPlaylistData {
@@ -70,7 +70,7 @@ class OpenwhydClient {
       after = '$lastId';
     }
     if (tracks.isEmpty) {
-      throw const PlatformException(
+      throw PlatformException(
           'Openwhyd: playlist not found or empty');
     }
     return OpenwhydPlaylistData(

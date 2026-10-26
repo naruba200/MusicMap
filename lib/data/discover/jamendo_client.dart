@@ -26,7 +26,7 @@
 import 'package:dio/dio.dart';
 
 import '../models/music_models.dart';
-import 'music_platform.dart';
+import '../platforms/music_platform.dart';
 
 /// One Jamendo playlist: metadata + its tracks in playlist order.
 class JamendoPlaylistData {
@@ -82,7 +82,7 @@ class JamendoClient {
     );
     final infoResults = _results(infoRes.data);
     if (infoResults.isEmpty || infoResults.first is! Map) {
-      throw const PlatformException('Jamendo: playlist not found');
+      throw PlatformException('Jamendo: playlist not found');
     }
     final tracksRes = await _dio.get(
       '$baseUrl/playlists/tracks/',
