@@ -24,17 +24,22 @@ class FakeJamendoAdapter implements HttpClientAdapter {
     final path = options.uri.path;
     final query = options.uri.queryParameters;
     final Map<String, dynamic> payload;
-    if (path.endsWith('/tracks/')) {
-      payload = {
-        'headers': {'status': 'success'},
-        'results': _tracks,
-      };
-    } else if (path.endsWith('/playlists/tracks/')) {
+    // NOTE: '/playlists/tracks/' must be checked BEFORE '/tracks/',
+    // because it also ends with '/tracks/'. The old order shadowed
+    // the playlist branch, so playlist('42') received the bare track
+    // list, the client's playlist-wrapper extraction found no
+    // 'tracks' key, and the import came back with 0 tracks.
+    if (path.endsWith('/playlists/tracks/')) {
       payload = {
         'headers': {'status': 'success'},
         'results': [
           {'id': 42, 'name': 'My Mix', 'tracks': _tracks},
         ],
+      };
+    } else if (path.endsWith('/tracks/')) {
+      payload = {
+        'headers': {'status': 'success'},
+        'results': _tracks,
       };
     } else if (path.endsWith('/playlists/')) {
       if (query['id'] == '42') {
@@ -225,3 +230,4 @@ void main() {
     expect(load.error, isNotNull);
   });
 }
+

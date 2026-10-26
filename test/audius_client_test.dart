@@ -17,6 +17,14 @@ import 'package:music_man/presentation/providers/discover_provider.dart';
 class FakeAudiusAdapter implements HttpClientAdapter {
   final List<List<String>> batchRequests = [];
 
+  /// When true, the /v1/tracks batch lookup fabricates a track for any
+  /// unknown id (simulating a huge catalogue for the 100-track cap
+  /// test). When false — the default — it returns only tracks that
+  /// actually exist, so a dead playlist id is dropped, not fabricated.
+  /// The old unconditional fabrication is what made the dead-id test
+  /// fail: id 3 was invented as 'T3' instead of being dropped.
+  bool _fabricateUnknownIds = false;
+
   @override
   Future<ResponseBody> fetch(
     RequestOptions options,
@@ -47,6 +55,7 @@ class FakeAudiusAdapter implements HttpClientAdapter {
         ],
       };
     } else if (path.endsWith('/playlists/9')) {
+      _fabricateUnknownIds = false;
       payload = {
         'data': {
           'id': 9,
@@ -64,6 +73,7 @@ class FakeAudiusAdapter implements HttpClientAdapter {
         },
       };
     } else if (path.endsWith('/playlists/100')) {
+      _fabricateUnknownIds = true;
       payload = {
         'data': {
           'id': 100,
@@ -78,21 +88,26 @@ class FakeAudiusAdapter implements HttpClientAdapter {
     } else if (path.endsWith('/v1/tracks')) {
       final ids = options.uri.queryParametersAll['id'] ?? [];
       batchRequests.add(ids);
-      payload = {
-        'data': [
-          for (final id in ids)
-            _trending.firstWhere(
-              (t) => '${t['id']}' == id,
-              orElse: () => {
-                'id': int.parse(id),
-                'title': 'T$id',
-                'duration': 60,
-                'user': {'name': 'A'},
-                'artwork': {},
-              },
-            ),
-        ],
-      };
+      final data = <dynamic>[];
+      for (final id in ids) {
+        final match =
+            _trending.where((t) => '${t['id']}' == id).toList();
+        if (match.isNotEmpty) {
+          data.add(match.first);
+        } else if (_fabricateUnknownIds) {
+          // Caps-test simulation only: invent a catalogue entry.
+          data.add({
+            'id': int.parse(id),
+            'title': 'T$id',
+            'duration': 60,
+            'user': {'name': 'A'},
+            'artwork': {},
+          });
+        }
+        // Otherwise the id is dead: the lookup never returns it, so
+        // the client must drop it (never fabricate it).
+      }
+      payload = {'data': data};
     } else {
       payload = {'data': []};
     }
@@ -220,3 +235,4 @@ void main() {
     expect(load.error, isNotNull);
   });
 }
+

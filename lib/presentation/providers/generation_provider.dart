@@ -1046,7 +1046,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
 /// [resolvingKey] so a button can show a spinner for its own track
 /// while the state is loading.
 class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
-  final AudioPlayer _player;
+  AudioPlayer? _player;
   final FallbackSources _fallbacks;
   String? _playingKey;
   String? _resolvingKey;
@@ -1055,14 +1055,23 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
   final Map<String, String> _previewCache = {};
 
   AudioPlayerNotifier(this._fallbacks, [AudioPlayer? player])
-      : _player = player ?? AudioPlayer(),
+      : _player = player,
         super(const AsyncValue.data(null));
+
+  /// The real player, created lazily on first actual playback so that
+  /// constructing the notifier — and resolving a preview, which is pure
+  /// Dart plus the preview cache — never touches the audio platform.
+  /// (audioplayers' AudioPlayer constructor calls _create() on the
+  /// platform, which has no registered plugin in a flutter_test
+  /// environment; the old eager construction is what made the
+  /// no-network resolvePreview test fail on CI.)
+  AudioPlayer get _audioPlayer => _player ??= AudioPlayer();
 
   /// Subscribe to completion events lazily, only when audio actually
   /// plays, so constructing the notifier (and resolving a preview that
   /// turns out not to exist) never touches platform channels.
   void _ensureStateSub() {
-    _stateSub ??= _player.onPlayerStateChanged.listen((playerState) {
+    _stateSub ??= _audioPlayer.onPlayerStateChanged.listen((playerState) {
       if (playerState == PlayerState.completed && _playingKey != null) {
         _playingKey = null;
         state = const AsyncValue.data(null);
@@ -1109,7 +1118,7 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
     final key = _key(track);
     if (_playingKey == key) {
       // Toggle: pause if already playing this track. No resolve needed.
-      await _player.pause();
+      await _audioPlayer.pause();
       _playingKey = null;
       state = const AsyncValue.data(null);
       return;
@@ -1131,14 +1140,14 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
     }
     // Stop any other track, then play this one.
     _ensureStateSub();
-    await _player.stop();
-    await _player.play(UrlSource(preview));
+    await _audioPlayer.stop();
+    await _audioPlayer.play(UrlSource(preview));
     _playingKey = key;
     state = AsyncValue.data(key);
   }
 
   Future<void> pause() async {
-    await _player.pause();
+    await _player?.pause();
     _playingKey = null;
     _resolvingKey = null;
     state = const AsyncValue.data(null);
@@ -1147,7 +1156,7 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
   @override
   void dispose() {
     _stateSub?.cancel();
-    _player.dispose();
+    _player?.dispose();
     super.dispose();
   }
 }

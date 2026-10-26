@@ -89,9 +89,18 @@ class JamendoClient {
       queryParameters: _params({'id': playlistId}),
     );
     final trackResults = _results(tracksRes.data);
-    final rawTracks = trackResults.isNotEmpty && trackResults.first is Map
-        ? (trackResults.first as Map)['tracks'] as List? ?? []
-        : <dynamic>[];
+    // The /playlists/tracks/ endpoint wraps tracks inside a playlist
+    // object, but tolerate a bare track list too: if the first result
+    // has no 'tracks' key, the results ARE the tracks.
+    final firstResult =
+        trackResults.isNotEmpty && trackResults.first is Map
+            ? trackResults.first as Map
+            : null;
+    final rawTracks = firstResult == null
+        ? <dynamic>[]
+        : firstResult.containsKey('tracks')
+            ? (firstResult['tracks'] as List? ?? [])
+            : trackResults;
     final tracks = parseTracks({'results': rawTracks})
         .take(maxPlaylistTracks)
         .toList();
@@ -206,3 +215,4 @@ class JamendoRadio {
         imageUrl: json['image'] as String?,
       );
 }
+
