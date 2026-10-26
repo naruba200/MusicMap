@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
 import '../../data/engine/recommendation_engine.dart';
+import '../../data/enrichment/album_enrichment.dart';
 import '../../data/enrichment/enrichment_models.dart';
 import '../../data/lastfm/lastfm_client.dart';
 import '../../data/models/music_models.dart';
@@ -153,7 +154,9 @@ class ResultsScreen extends ConsumerWidget {
       itemCount: result.albums.length,
       itemBuilder: (ctx, i) {
         final album = result.albums[i];
-        return _AlbumCard(album: album);
+        final enrichment = result.albumEnrichments[
+            albumEnrichmentKey(album.artist, album.name)];
+        return _AlbumCard(album: album, enrichment: enrichment);
       },
     );
   }
@@ -301,11 +304,32 @@ class _PreviewButton extends ConsumerWidget {
 class _AlbumCard extends ConsumerWidget {
   final AlbumRec album;
 
-  const _AlbumCard({required this.album});
+  /// Discogs annotation for this album, if enrichment found one.
+  final AlbumEnrichment? enrichment;
+
+  const _AlbumCard({required this.album, this.enrichment});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    // Honest Discogs line: year, styles, community rating. Never
+    // presented as Last.fm data.
+    String? enrichmentLine;
+    final e = enrichment;
+    if (e != null && !e.isEmpty && e.sources.contains('Discogs')) {
+      final parts = <String>[];
+      if (e.year != null) parts.add('${e.year}');
+      if (e.styles.isNotEmpty) parts.add(e.styles.take(2).join(', '));
+      if (e.communityRating != null) {
+        final rating = '★ ${e.communityRating!.toStringAsFixed(1)}';
+        parts.add(e.ratingCount != null
+            ? '$rating (${e.ratingCount})'
+            : rating);
+      }
+      if (parts.isNotEmpty) {
+        enrichmentLine = 'Discogs: ${parts.join(' • ')}';
+      }
+    }
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: InkWell(
@@ -337,6 +361,14 @@ class _AlbumCard extends ConsumerWidget {
                       _badge(theme, '${album.songCount} recommended tracks')
                     else
                       _badge(theme, 'Surprise pick'),
+                    if (enrichmentLine != null) ...[
+                      const SizedBox(height: 4),
+                      Text(enrichmentLine,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant)),
+                    ],
                   ],
                 ),
               ),
