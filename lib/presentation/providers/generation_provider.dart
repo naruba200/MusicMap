@@ -18,10 +18,12 @@ import '../../data/enrichment/enrichment_cache.dart';
 import '../../data/enrichment/enrichment_models.dart';
 import '../../data/enrichment/musicbrainz_client.dart';
 import '../../data/fallback/fallback_sources.dart';
+import '../../data/fallback/listenbrainz_client.dart';
 import '../../data/lastfm/lastfm_client.dart';
 import '../../data/models/music_models.dart';
 import '../../data/repositories/favorites_repository.dart';
 import '../../data/repositories/history_repository.dart';
+import '../../data/repositories/settings_repository.dart';
 import 'providers.dart';
 
 /// Maps a mood/genre chip label to a Last.fm tag.
@@ -173,7 +175,8 @@ final generationProvider =
         GenerationNotifier(
             ref.watch(dioProvider),
             ref.watch(historyRepositoryProvider),
-            ref.watch(favoritesRepositoryProvider)));
+            ref.watch(favoritesRepositoryProvider),
+            ref.watch(settingsRepositoryProvider)));
 
 /// Related genres for a selected genre chip, live via Last.fm tag.getSimilar
 /// with the static fallback map on failure. Cached per genre for the session.
@@ -204,6 +207,10 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   final HistoryRepository _history;
   final FavoritesRepository _favorites;
 
+  /// Optional: only used for the ListenBrainz username (Phase 3).
+  /// Null in older constructions — the layer is then inactive.
+  final SettingsRepository? _settingsRepository;
+
   /// Cross-source fallbacks use their own plain Dio (see
   /// FallbackSources): a sinkholed Deezer host must fail fast instead
   /// of burning the shared Dio's retries per failed seed.
@@ -221,9 +228,14 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   /// Replace with a personal key only if the user supplies one
   /// (never commit a personal key).
   late final TheAudioDBClient _theAudioDb = TheAudioDBClient();
+
+  /// ListenBrainz (Phase 3): plain Dio via its own client, one
+  /// capped call per generation, cached 7 days. Never aborts a run.
+  late final ListenBrainzClient _listenBrainz = ListenBrainzClient();
   bool _cancelled = false;
 
-  GenerationNotifier(this._dio, this._history, this._favorites)
+  GenerationNotifier(this._dio, this._history, this._favorites,
+      [this._settingsRepository])
       : super(GenerationState.idle);
 
   LastFmClient get _lfm => LastFmClient(dio: _dio, apiKey: lastFmApiKey);
@@ -391,6 +403,41 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         fallbackBySeed: fallbackBySeed,
         fallbackReasonBySeed: fallbackReasonBySeed,
       );
+
+      // 1a. ListenBrainz (Phase 3): optional username layer, one
+      // capped call per generation, cached 7 days. Dormant when no
+      // username is set; failures return [] and never abort. Merged
+      // like the 1b/1c expansions: original scores kept, LB tracks
+      // added at 0.4 weight with reason "From ListenBrainz".
+      final lbUsername = _settingsRepository?.listenBrainzUsername;
+      if (lbUsername != null && !_cancelled) {
+        _setProgress('Checking ListenBrainz', 0, 1);
+        final lbTracks = await _listenBrainzTracks(lbUsername);
+        if (lbTracks.isNotEmpty) {
+          final lbScored = RecommendationEngine.scoreCandidates(
+            seeds: selection.seeds,
+            fallbackBySeed: {0: lbTracks},
+            fallbackReasonBySeed: {0: 'From ListenBrainz'},
+          );
+          final existingKeys = {
+            for (final s in scored)
+              RecommendationEngine.normalizeKey(
+                  s.track.artist, s.track.title)
+          };
+          final merged = <ScoredTrack>[];
+          merged.addAll(scored);
+          for (final e in lbScored) {
+            final key = RecommendationEngine.normalizeKey(
+                e.track.artist, e.track.title);
+            if (!existingKeys.contains(key)) {
+              merged.add(e);
+              existingKeys.add(key);
+            }
+          }
+          merged.sort((a, b) => b.score.compareTo(a.score));
+          scored = merged;
+        }
+      }
 
       // 1b. Aggressive expansion (fixes sparse results): if the core pool
       // is smaller than the requested count, query each seed artist's own
@@ -885,6 +932,39 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       return enrichments;
     } catch (_) {
       return const {};
+    }
+  }
+
+  /// ListenBrainz recommendations for [username], via the 7-day Hive
+  /// cache when it opens (a cache failure just means uncached).
+  /// A fresh cached miss returns [] without a network call; every
+  /// failure path returns [] and never aborts the run.
+  Future<List<SimilarTrack>> _listenBrainzTracks(String username) async {
+    try {
+      ListenBrainzCache? cache;
+      try {
+        cache = await ListenBrainzCache.open();
+      } catch (_) {
+        cache = null;
+      }
+      if (cache != null) {
+        final hit = cache.lookup(username);
+        if (hit != null) return hit;
+        if (!cache.shouldRetry(username, DateTime.now())) {
+          return const [];
+        }
+      }
+      final tracks = await _listenBrainz.recommendedTracks(username);
+      if (cache != null) {
+        if (tracks.isEmpty) {
+          cache.storeMiss(username);
+        } else {
+          cache.store(username, tracks);
+        }
+      }
+      return tracks;
+    } catch (_) {
+      return const [];
     }
   }
 
