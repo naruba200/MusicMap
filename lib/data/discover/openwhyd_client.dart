@@ -70,7 +70,7 @@ class OpenwhydClient {
       after = '$lastId';
     }
     if (tracks.isEmpty) {
-      throw PlatformException(
+      throw const PlatformException(
           'Openwhyd: playlist not found or empty');
     }
     return OpenwhydPlaylistData(

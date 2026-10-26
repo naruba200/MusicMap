@@ -1170,7 +1170,7 @@ class _MixcloudTabState extends ConsumerState<_MixcloudTab> {
               style: Theme.of(context).textTheme.titleSmall)
         else
           Text(
-              _feed[0].toUpperCase() + _feed.substring(1) + ' shows',
+              '${_feed[0].toUpperCase()}${_feed.substring(1)} shows',
               style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 8),
         _MixcloudShowSection(

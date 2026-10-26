@@ -151,7 +151,7 @@ void main() {
       final dg = DiscogsClient(dgDio, null, _noWait());
       final enricher = DiscogsEnricher(dg, mb);
       final albums = [
-        AlbumRec(
+        const AlbumRec(
           name: 'Test Album',
           artist: 'Test Artist',
           songCount: 1,

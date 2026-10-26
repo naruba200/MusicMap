@@ -10,7 +10,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:music_man/data/discover/openwhyd_client.dart';
-import 'package:music_man/data/models/music_models.dart';
 import 'package:music_man/presentation/providers/discover_provider.dart';
 
 class FakeOpenwhydAdapter implements HttpClientAdapter {

@@ -82,7 +82,7 @@ class JamendoClient {
     );
     final infoResults = _results(infoRes.data);
     if (infoResults.isEmpty || infoResults.first is! Map) {
-      throw PlatformException('Jamendo: playlist not found');
+      throw const PlatformException('Jamendo: playlist not found');
     }
     final tracksRes = await _dio.get(
       '$baseUrl/playlists/tracks/',

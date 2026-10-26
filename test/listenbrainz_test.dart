@@ -142,12 +142,13 @@ void main() {
 
   group('ListenBrainz fallback scoring (provider merge shape)', () {
     test('LB tracks score at 0.4 weight with an honest reason', () {
-      final seeds = [Track(artist: 'Seed Artist', title: 'Seed Song')];
+      final seeds = [const Track(artist: 'Seed Artist', title: 'Seed Song')];
       final scored = RecommendationEngine.scoreCandidates(
         seeds: seeds,
+        similarBySeed: const {},
         fallbackBySeed: {
           0: [
-            SimilarTrack(artist: 'LB Artist', title: 'LB Song', match: 0),
+            const SimilarTrack(artist: 'LB Artist', title: 'LB Song', match: 0),
           ],
         },
         fallbackReasonBySeed: {0: 'From ListenBrainz'},
@@ -158,12 +159,13 @@ void main() {
     });
 
     test('LB tracks never recommend a seed track itself', () {
-      final seeds = [Track(artist: 'Seed Artist', title: 'Seed Song')];
+      final seeds = [const Track(artist: 'Seed Artist', title: 'Seed Song')];
       final scored = RecommendationEngine.scoreCandidates(
         seeds: seeds,
+        similarBySeed: const {},
         fallbackBySeed: {
           0: [
-            SimilarTrack(
+            const SimilarTrack(
                 artist: 'Seed Artist', title: 'Seed Song', match: 0),
           ],
         },

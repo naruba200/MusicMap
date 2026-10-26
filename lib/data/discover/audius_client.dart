@@ -54,7 +54,7 @@ class AudiusClient {
       '$host/v1/tracks/$trackId/stream?app_name=$appName';
 
   Future<String> _resolveHost() async {
-    if (_hostOverride != null) return _hostOverride!;
+    if (_hostOverride != null) return _hostOverride;
     if (_host != null) return _host!;
     try {
       final res = await _dio.get('https://api.audius.co');
@@ -133,11 +133,11 @@ class AudiusClient {
     );
     final data = (res.data as Map?)?['data'];
     if (data is List) {
-      if (data.isEmpty) throw PlatformException('Audius: playlist not found');
+      if (data.isEmpty) throw const PlatformException('Audius: playlist not found');
       return _playlistFromJson(data.first as Map, host);
     }
     if (data is Map) return _playlistFromJson(data, host);
-    throw PlatformException('Audius: playlist not found');
+    throw const PlatformException('Audius: playlist not found');
   }
 
   Future<AudiusPlaylistData> _playlistFromJson(
