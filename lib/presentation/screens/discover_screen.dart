@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../data/discover/audius_client.dart';
 import '../../data/discover/jamendo_client.dart';
+import '../../data/discover/mixcloud_client.dart';
 import '../../data/discover/openwhyd_client.dart';
 import '../../data/platforms/open_in_app.dart';
 import '../../data/models/music_models.dart';
@@ -25,7 +26,7 @@ class DiscoverScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Discover'),
@@ -34,6 +35,7 @@ class DiscoverScreen extends ConsumerWidget {
               Tab(icon: Icon(Icons.audiotrack), text: 'Audius'),
               Tab(icon: Icon(Icons.library_music), text: 'Jamendo'),
               Tab(icon: Icon(Icons.people), text: 'Openwhyd'),
+              Tab(icon: Icon(Icons.radio), text: 'Mixcloud'),
             ],
           ),
         ),
@@ -42,6 +44,7 @@ class DiscoverScreen extends ConsumerWidget {
             _AudiusTab(),
             _JamendoTab(),
             _OpenwhydTab(),
+            _MixcloudTab(),
           ],
         ),
       ),
@@ -171,6 +174,7 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
         trending.when(
           data: (load) => _TrackList(
             load: load,
+            sourceLabel: 'From Audius',
             player: _player,
             onRetry: () => ref.invalidate(audiusTrendingProvider(_genre)),
             onRefresh: () => setState(() {}),
@@ -211,8 +215,11 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
         ),
         if (_search.isNotEmpty) ...[
           const SizedBox(height: 8),
-          _AudiusSearchResults(
+          _DiscoverSearchResults(
+            searchProvider: audiusSearchProvider,
             query: _search,
+            sourceLabel: 'From Audius',
+            errorMessage: 'Audius search failed.',
             player: _player,
             onRefresh: () => setState(() {}),
           ),
@@ -243,8 +250,17 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
         ),
         if (_playlistId != null) ...[
           const SizedBox(height: 8),
-          _AudiusPlaylistView(
+          _DiscoverPlaylistView(
             playlistId: _playlistId!,
+            playlistProvider: audiusPlaylistProvider,
+            parseLink: AudiusClient.parsePlaylistLink,
+            hint: 'That doesn\'t look like an Audius playlist link or id — '
+                'an Audius playlist link ends in a number, e.g. '
+                'audius.co/user/playlist/name-123456.',
+            fallbackOwner: 'Audius',
+            showCover: true,
+            sourceLabel: 'From Audius',
+            importErrorMessage: 'Couldn\'t import that Audius playlist.',
             player: _player,
             onRecommendations: _getRecommendations,
             onRefresh: () => setState(() {}),
@@ -268,25 +284,35 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
 }
 
 /// Search results for the Audius tab (track list with in-tab playback).
-class _AudiusSearchResults extends ConsumerWidget {
+/// Search results for a streamable Discover source (Audius/Jamendo):
+/// track list with in-tab playback, labelled with [sourceLabel] so the
+/// source is never ambiguous.
+class _DiscoverSearchResults extends ConsumerWidget {
+  final FutureProviderFamily<DiscoverLoad<Track>, String> searchProvider;
   final String query;
+  final String sourceLabel;
+  final String errorMessage;
   final _TabPlayer player;
   final VoidCallback onRefresh;
 
-  const _AudiusSearchResults({
+  const _DiscoverSearchResults({
+    required this.searchProvider,
     required this.query,
+    required this.sourceLabel,
+    required this.errorMessage,
     required this.player,
     required this.onRefresh,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final results = ref.watch(audiusSearchProvider(query));
+    final results = ref.watch(searchProvider(query));
     return results.when(
       data: (load) => _TrackList(
         load: load,
+        sourceLabel: sourceLabel,
         player: player,
-        onRetry: () => ref.invalidate(audiusSearchProvider(query)),
+        onRetry: () => ref.invalidate(searchProvider(query)),
         onRefresh: onRefresh,
       ),
       loading: () => const Padding(
@@ -294,22 +320,40 @@ class _AudiusSearchResults extends ConsumerWidget {
         child: Center(child: CircularProgressIndicator()),
       ),
       error: (e, _) => _ErrorRow(
-        message: 'Audius search failed.',
-        onRetry: () => ref.invalidate(audiusSearchProvider(query)),
+        message: errorMessage,
+        onRetry: () => ref.invalidate(searchProvider(query)),
       ),
     );
   }
 }
 
 /// An imported Audius playlist: track list + "Get recommendations".
-class _AudiusPlaylistView extends ConsumerWidget {
+/// An imported playlist for a streamable Discover source (Audius/
+/// Jamendo): track list + "Get recommendations". The provider takes a
+/// resolved id, so links are parsed here and a bad link shows [hint]
+/// instead of a failed load.
+class _DiscoverPlaylistView extends ConsumerWidget {
   final String playlistId;
+  final FutureProviderFamily<PlaylistLoad, String> playlistProvider;
+  final String? Function(String) parseLink;
+  final String hint;
+  final String fallbackOwner;
+  final bool showCover;
+  final String sourceLabel;
+  final String importErrorMessage;
   final _TabPlayer player;
   final void Function(PlaylistInfo, List<Track>) onRecommendations;
   final VoidCallback onRefresh;
 
-  const _AudiusPlaylistView({
+  const _DiscoverPlaylistView({
     required this.playlistId,
+    required this.playlistProvider,
+    required this.parseLink,
+    required this.hint,
+    required this.fallbackOwner,
+    required this.showCover,
+    required this.sourceLabel,
+    required this.importErrorMessage,
     required this.player,
     required this.onRecommendations,
     required this.onRefresh,
@@ -317,25 +361,20 @@ class _AudiusPlaylistView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // The provider takes a numeric id; resolve links here so a bad link
-    // shows a hint instead of a failed load.
-    final resolved = AudiusClient.parsePlaylistLink(playlistId);
+    final resolved = parseLink(playlistId);
     if (resolved == null) {
-      return const Text(
-        'That doesn\'t look like an Audius playlist link or id — '
-        'an Audius playlist link ends in a number, e.g. '
-        'audius.co/user/playlist/name-123456.',
-        style: TextStyle(fontStyle: FontStyle.italic),
+      return Text(
+        hint,
+        style: const TextStyle(fontStyle: FontStyle.italic),
       );
     }
-    final load = ref.watch(audiusPlaylistProvider(resolved));
+    final load = ref.watch(playlistProvider(resolved));
     return load.when(
       data: (data) {
         if (data.error != null) {
           return _ErrorRow(
             message: data.error!,
-            onRetry: () =>
-                ref.invalidate(audiusPlaylistProvider(resolved)),
+            onRetry: () => ref.invalidate(playlistProvider(resolved)),
           );
         }
         final info = data.info!;
@@ -344,7 +383,7 @@ class _AudiusPlaylistView extends ConsumerWidget {
           children: [
             ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: info.coverUrl != null
+              leading: showCover && info.coverUrl != null
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(6),
                       child: Image.network(info.coverUrl!,
@@ -353,7 +392,8 @@ class _AudiusPlaylistView extends ConsumerWidget {
                   : const Icon(Icons.queue_music, size: 40),
               title: Text(info.name),
               subtitle: Text(
-                  '${info.owner ?? 'Audius'} · ${data.tracks.length} tracks'),
+                  '${info.owner ?? fallbackOwner} · '
+                  '${data.tracks.length} tracks'),
             ),
             SizedBox(
               width: double.infinity,
@@ -365,9 +405,9 @@ class _AudiusPlaylistView extends ConsumerWidget {
             const SizedBox(height: 8),
             _TrackList(
               load: DiscoverLoad(items: data.tracks),
+              sourceLabel: sourceLabel,
               player: player,
-              onRetry: () =>
-                  ref.invalidate(audiusPlaylistProvider(resolved)),
+              onRetry: () => ref.invalidate(playlistProvider(resolved)),
               onRefresh: onRefresh,
             ),
           ],
@@ -378,8 +418,8 @@ class _AudiusPlaylistView extends ConsumerWidget {
         child: Center(child: CircularProgressIndicator()),
       ),
       error: (e, _) => _ErrorRow(
-        message: 'Couldn\'t import that Audius playlist.',
-        onRetry: () => ref.invalidate(audiusPlaylistProvider(resolved)),
+        message: importErrorMessage,
+        onRetry: () => ref.invalidate(playlistProvider(resolved)),
       ),
     );
   }
@@ -390,12 +430,14 @@ class _AudiusPlaylistView extends ConsumerWidget {
 /// found", not a failure.
 class _TrackList extends StatefulWidget {
   final DiscoverLoad<Track> load;
+  final String sourceLabel;
   final _TabPlayer player;
   final VoidCallback onRetry;
   final VoidCallback onRefresh;
 
   const _TrackList({
     required this.load,
+    required this.sourceLabel,
     required this.player,
     required this.onRetry,
     required this.onRefresh,
@@ -432,7 +474,7 @@ class _TrackListState extends State<_TrackList> {
                 : const Icon(Icons.audiotrack, size: 40),
             title: Text(track.title,
                 maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text('From Audius · ${track.artist}',
+            subtitle: Text('${widget.sourceLabel} · ${track.artist}',
                 maxLines: 1, overflow: TextOverflow.ellipsis),
             trailing: track.streamUrl == null
                 ? null
@@ -591,8 +633,11 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
         ),
         if (_search.isNotEmpty) ...[
           const SizedBox(height: 8),
-          _JamendoSearchResults(
+          _DiscoverSearchResults(
+            searchProvider: jamendoSearchProvider,
             query: _search,
+            sourceLabel: 'From Jamendo',
+            errorMessage: 'Jamendo search failed.',
             player: _player,
             onRefresh: () => setState(() {}),
           ),
@@ -625,8 +670,16 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
         ),
         if (_playlistId != null && _playlistId!.isNotEmpty) ...[
           const SizedBox(height: 8),
-          _JamendoPlaylistView(
+          _DiscoverPlaylistView(
             playlistId: _playlistId!,
+            playlistProvider: jamendoPlaylistProvider,
+            parseLink: JamendoClient.parsePlaylistLink,
+            hint: 'That doesn\'t look like a Jamendo playlist link or id — '
+                'a Jamendo playlist link contains /playlist/<number>.',
+            fallbackOwner: 'Jamendo',
+            showCover: false,
+            sourceLabel: 'From Jamendo',
+            importErrorMessage: 'Couldn\'t import that Jamendo playlist.',
             player: _player,
             onRecommendations: _getRecommendations,
             onRefresh: () => setState(() {}),
@@ -645,183 +698,6 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
 }
 
 /// Search results for the Jamendo tab (track list with in-tab playback).
-class _JamendoSearchResults extends ConsumerWidget {
-  final String query;
-  final _TabPlayer player;
-  final VoidCallback onRefresh;
-
-  const _JamendoSearchResults({
-    required this.query,
-    required this.player,
-    required this.onRefresh,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final results = ref.watch(jamendoSearchProvider(query));
-    return results.when(
-      data: (load) => _JamendoTrackList(
-        load: load,
-        player: player,
-        onRetry: () => ref.invalidate(jamendoSearchProvider(query)),
-        onRefresh: onRefresh,
-      ),
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => _ErrorRow(
-        message: 'Jamendo search failed.',
-        onRetry: () => ref.invalidate(jamendoSearchProvider(query)),
-      ),
-    );
-  }
-}
-
-/// Jamendo track list: same shape as the Audius list, but labelled
-/// "From Jamendo" so the source is never ambiguous.
-class _JamendoTrackList extends StatefulWidget {
-  final DiscoverLoad<Track> load;
-  final _TabPlayer player;
-  final VoidCallback onRetry;
-  final VoidCallback onRefresh;
-
-  const _JamendoTrackList({
-    required this.load,
-    required this.player,
-    required this.onRetry,
-    required this.onRefresh,
-  });
-
-  @override
-  State<_JamendoTrackList> createState() => _JamendoTrackListState();
-}
-
-class _JamendoTrackListState extends State<_JamendoTrackList> {
-  @override
-  Widget build(BuildContext context) {
-    if (widget.load.error != null) {
-      return _ErrorRow(
-          message: widget.load.error!, onRetry: widget.onRetry);
-    }
-    if (widget.load.items.isEmpty) {
-      return Text(
-        'Nothing here yet.',
-        style: Theme.of(context).textTheme.bodySmall,
-      );
-    }
-    return Column(
-      children: [
-        for (final track in widget.load.items)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: track.imageUrl != null
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Image.network(track.imageUrl!,
-                        width: 48, height: 48, fit: BoxFit.cover),
-                  )
-                : const Icon(Icons.audiotrack, size: 40),
-            title: Text(track.title,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text('From Jamendo · ${track.artist}',
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            trailing: track.streamUrl == null
-                ? null
-                : IconButton(
-                    icon: Icon(
-                      widget.player.playingId == track.platformTrackId
-                          ? Icons.pause
-                          : Icons.play_arrow,
-                    ),
-                    onPressed: () async {
-                      await widget.player.toggle(
-                          track.platformTrackId!, track.streamUrl!);
-                      if (mounted) setState(() {});
-                      widget.onRefresh();
-                    },
-                  ),
-          ),
-      ],
-    );
-  }
-}
-
-/// An imported Jamendo playlist: track list + "Get recommendations".
-class _JamendoPlaylistView extends ConsumerWidget {
-  final String playlistId;
-  final _TabPlayer player;
-  final void Function(PlaylistInfo, List<Track>) onRecommendations;
-  final VoidCallback onRefresh;
-
-  const _JamendoPlaylistView({
-    required this.playlistId,
-    required this.player,
-    required this.onRecommendations,
-    required this.onRefresh,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final resolved = JamendoClient.parsePlaylistLink(playlistId);
-    if (resolved == null) {
-      return const Text(
-        'That doesn\'t look like a Jamendo playlist link or id — '
-        'a Jamendo playlist link contains /playlist/<number>.',
-        style: TextStyle(fontStyle: FontStyle.italic),
-      );
-    }
-    final load = ref.watch(jamendoPlaylistProvider(resolved));
-    return load.when(
-      data: (data) {
-        if (data.error != null) {
-          return _ErrorRow(
-            message: data.error!,
-            onRetry: () =>
-                ref.invalidate(jamendoPlaylistProvider(resolved)),
-          );
-        }
-        final info = data.info!;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.queue_music, size: 40),
-              title: Text(info.name),
-              subtitle: Text(
-                  '${info.owner ?? 'Jamendo'} · ${data.tracks.length} tracks'),
-            ),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => onRecommendations(info, data.tracks),
-                child: const Text('Get recommendations'),
-              ),
-            ),
-            const SizedBox(height: 8),
-            _JamendoTrackList(
-              load: DiscoverLoad(items: data.tracks),
-              player: player,
-              onRetry: () =>
-                  ref.invalidate(jamendoPlaylistProvider(resolved)),
-              onRefresh: onRefresh,
-            ),
-          ],
-        );
-      },
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => _ErrorRow(
-        message: 'Couldn\'t import that Jamendo playlist.',
-        onRetry: () => ref.invalidate(jamendoPlaylistProvider(resolved)),
-      ),
-    );
-  }
-}
-
 /// Curated Jamendo radios. Playback is best-effort: when the radios/stream
 /// endpoint returns no stream URL, the row explains instead of failing.
 class _JamendoRadiosView extends ConsumerStatefulWidget {
@@ -1140,5 +1016,314 @@ class _OpenwhydTrackList extends StatelessWidget {
       );
     }
     return Column(children: rows);
+  }
+}
+
+// -- Mixcloud tab -----------------------------------------------------------
+// Shows/mixes browser ONLY: popular/hot/new feeds, show search, and tag
+// search. Shows open in Mixcloud (app/browser) — there is no in-app
+// Mixcloud playback, and nothing here feeds the song generator at all.
+
+class _MixcloudTab extends ConsumerStatefulWidget {
+  const _MixcloudTab();
+
+  @override
+  ConsumerState<_MixcloudTab> createState() => _MixcloudTabState();
+}
+
+class _MixcloudTabState extends ConsumerState<_MixcloudTab> {
+  String _feed = 'popular';
+  final _showSearchController = TextEditingController();
+  final _tagSearchController = TextEditingController();
+  String _showQuery = '';
+  String _tagQuery = '';
+  String? _tagKey;
+  String? _tagName;
+
+  @override
+  void dispose() {
+    _showSearchController.dispose();
+    _tagSearchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text(
+          'Mixcloud is DJ mixes, radio shows and podcasts. Shows open '
+          'in Mixcloud — they never play here and never feed the song '
+          'generator.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final feed in ['popular', 'hot', 'new'])
+              FilterChip(
+                label: Text(feed[0].toUpperCase() + feed.substring(1)),
+                selected: _feed == feed && _tagKey == null,
+                onSelected: (v) {
+                  if (!v) return;
+                  setState(() {
+                    _feed = feed;
+                    _tagKey = null;
+                    _tagName = null;
+                    _showQuery = '';
+                    _showSearchController.clear();
+                  });
+                },
+              ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Text('Search shows',
+            style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _showSearchController,
+                decoration: const InputDecoration(
+                  hintText: 'Search Mixcloud shows…',
+                  border: OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => setState(() {
+                  _showQuery = _showSearchController.text.trim();
+                  _tagKey = null;
+                  _tagName = null;
+                }),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: () => setState(() {
+                _showQuery = _showSearchController.text.trim();
+                _tagKey = null;
+                _tagName = null;
+              }),
+              child: const Text('Search'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Text('Search tags',
+            style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _tagSearchController,
+                decoration: const InputDecoration(
+                  hintText: 'e.g. funk, jazz, ambient…',
+                  border: OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => setState(
+                    () => _tagQuery = _tagSearchController.text.trim()),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: () => setState(
+                  () => _tagQuery = _tagSearchController.text.trim()),
+              child: const Text('Search'),
+            ),
+          ],
+        ),
+        if (_tagQuery.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _MixcloudTagResults(
+            query: _tagQuery,
+            onPick: (tag) => setState(() {
+              _tagKey = tag.key;
+              _tagName = tag.name;
+              _showQuery = '';
+              _showSearchController.clear();
+            }),
+          ),
+        ],
+        const SizedBox(height: 16),
+        if (_tagKey != null)
+          Row(
+            children: [
+              Expanded(
+                child: Text('Shows tagged "$_tagName"',
+                    style: Theme.of(context).textTheme.titleSmall),
+              ),
+              TextButton(
+                onPressed: () => setState(() {
+                  _tagKey = null;
+                  _tagName = null;
+                }),
+                child: const Text('Clear'),
+              ),
+            ],
+          )
+        else if (_showQuery.isNotEmpty)
+          Text('Results for "$_showQuery"',
+              style: Theme.of(context).textTheme.titleSmall)
+        else
+          Text(
+              _feed[0].toUpperCase() + _feed.substring(1) + ' shows',
+              style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        _MixcloudShowSection(
+          feed: _feed,
+          showQuery: _showQuery,
+          tagKey: _tagKey,
+        ),
+      ],
+    );
+  }
+}
+
+/// Watches exactly one show provider for the current view (tag shows,
+/// show search, or the selected feed) and renders its list or error.
+class _MixcloudShowSection extends ConsumerWidget {
+  final String feed;
+  final String showQuery;
+  final String? tagKey;
+
+  const _MixcloudShowSection({
+    required this.feed,
+    required this.showQuery,
+    required this.tagKey,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AsyncValue<DiscoverLoad<MixcloudShow>> shows;
+    final VoidCallback onRetry;
+    if (tagKey != null) {
+      shows = ref.watch(mixcloudTagShowsProvider(tagKey!));
+      onRetry = () => ref.invalidate(mixcloudTagShowsProvider(tagKey!));
+    } else if (showQuery.isNotEmpty) {
+      shows = ref.watch(mixcloudSearchProvider(showQuery));
+      onRetry = () => ref.invalidate(mixcloudSearchProvider(showQuery));
+    } else {
+      shows = ref.watch(mixcloudFeedProvider(feed));
+      onRetry = () => ref.invalidate(mixcloudFeedProvider(feed));
+    }
+    return shows.when(
+      data: (load) => _MixcloudShowList(load: load, onRetry: onRetry),
+      loading: () => const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (e, _) => _ErrorRow(
+        message: 'Couldn\'t load Mixcloud shows.',
+        onRetry: onRetry,
+      ),
+    );
+  }
+}
+
+/// Pure show list renderer: artwork, name, user + length, open button.
+class _MixcloudShowList extends StatelessWidget {
+  final DiscoverLoad<MixcloudShow> load;
+  final VoidCallback onRetry;
+
+  const _MixcloudShowList({required this.load, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    if (load.error != null) {
+      return _ErrorRow(message: load.error!, onRetry: onRetry);
+    }
+    if (load.items.isEmpty) {
+      return Text(
+        'Nothing here yet.',
+        style: Theme.of(context).textTheme.bodySmall,
+      );
+    }
+    return Column(
+      children: [
+        for (final show in load.items)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: show.imageUrl != null
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Image.network(show.imageUrl!,
+                        width: 48, height: 48, fit: BoxFit.cover),
+                  )
+                : const Icon(Icons.radio, size: 40),
+            title: Text(show.name,
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              [
+                if (show.userName != null) show.userName!,
+                if (show.audioLengthSec != null)
+                  MixcloudClient.formatLength(show.audioLengthSec!),
+              ].join(' · '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: show.url.isEmpty
+                ? null
+                : IconButton(
+                    icon: const Icon(Icons.open_in_new),
+                    onPressed: () async {
+                      await openLinkInAppFirst(Uri.parse(show.url));
+                    },
+                  ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Tag search results as chips; tapping one shows that tag's shows.
+class _MixcloudTagResults extends ConsumerWidget {
+  final String query;
+  final void Function(MixcloudTag) onPick;
+
+  const _MixcloudTagResults({required this.query, required this.onPick});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tags = ref.watch(mixcloudTagSearchProvider(query));
+    return tags.when(
+      data: (load) {
+        if (load.error != null) {
+          return _ErrorRow(
+            message: load.error!,
+            onRetry: () =>
+                ref.invalidate(mixcloudTagSearchProvider(query)),
+          );
+        }
+        if (load.items.isEmpty) {
+          return Text(
+            'No tags found.',
+            style: Theme.of(context).textTheme.bodySmall,
+          );
+        }
+        return Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final tag in load.items)
+              ActionChip(
+                label: Text(tag.name),
+                onPressed: () => onPick(tag),
+              ),
+          ],
+        );
+      },
+      loading: () => const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (e, _) => _ErrorRow(
+        message: 'Mixcloud tag search failed.',
+        onRetry: () => ref.invalidate(mixcloudTagSearchProvider(query)),
+      ),
+    );
   }
 }
