@@ -13,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../data/discover/audius_client.dart';
 import '../../data/discover/jamendo_client.dart';
+import '../../data/discover/openwhyd_client.dart';
 import '../../data/models/music_models.dart';
 
 /// A Discover load: items on success, or an empty list plus [error] when
@@ -189,5 +190,33 @@ final jamendoRadiosProvider =
   } catch (_) {
     return const DiscoverLoad(
         items: [], error: 'Couldn't load Jamendo radios.');
+  }
+});
+
+// -- Openwhyd -------------------------------------------------------------
+
+final openwhydClientProvider = Provider<OpenwhydClient>(
+    (ref) => OpenwhydClient(ref.watch(discoverDioProvider)));
+
+/// Full Openwhyd playlist import. Family key: "<user>::<playlistId>".
+/// A malformed key yields an error load, never a throw.
+final openwhydPlaylistProvider =
+    FutureProvider.family<PlaylistLoad, String>((ref, key) async {
+  final sep = key.indexOf('::');
+  if (sep <= 0 || sep + 2 >= key.length) {
+    return const PlaylistLoad(
+        error: 'That doesn\'t look like an Openwhyd playlist link — '
+            'it should be openwhyd.org/<user>/playlist/<number>.');
+  }
+  final user = key.substring(0, sep);
+  final playlistId = key.substring(sep + 2);
+  try {
+    final data =
+        await ref.watch(openwhydClientProvider).playlist(user, playlistId);
+    return PlaylistLoad(info: data.info, tracks: data.tracks);
+  } catch (_) {
+    return const PlaylistLoad(
+        error: 'Couldn\'t import that Openwhyd playlist — '
+            'check the link and your connection.');
   }
 });

@@ -9,6 +9,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../data/discover/audius_client.dart';
 import '../../data/discover/jamendo_client.dart';
+import '../../data/discover/openwhyd_client.dart';
+import '../../data/platforms/open_in_app.dart';
 import '../../data/models/music_models.dart';
 import '../providers/discover_provider.dart';
 import '../providers/generation_provider.dart';
@@ -23,7 +25,7 @@ class DiscoverScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Discover'),
@@ -31,6 +33,7 @@ class DiscoverScreen extends ConsumerWidget {
             tabs: [
               Tab(icon: Icon(Icons.audiotrack), text: 'Audius'),
               Tab(icon: Icon(Icons.library_music), text: 'Jamendo'),
+              Tab(icon: Icon(Icons.people), text: 'Openwhyd'),
             ],
           ),
         ),
@@ -38,6 +41,7 @@ class DiscoverScreen extends ConsumerWidget {
           children: [
             _AudiusTab(),
             _JamendoTab(),
+            _OpenwhydTab(),
           ],
         ),
       ),
@@ -907,5 +911,234 @@ class _JamendoRadiosViewState extends ConsumerState<_JamendoRadiosView> {
         onRetry: () => ref.invalidate(jamendoRadiosProvider),
       ),
     );
+  }
+}
+
+// -- Openwhyd tab -----------------------------------------------------------
+// Small-community curation: import a public playlist via the no-auth Data
+// Export API. Tracks resolve back to YouTube/SoundCloud/Deezer/Vimeo, so
+// each row opens its original instead of playing in-app (Openwhyd has no
+// in-app stream). Same separation as the other tabs: nothing here feeds
+// core scoring, but a playlist can seed a one-off recommendations run.
+
+class _OpenwhydTab extends ConsumerStatefulWidget {
+  const _OpenwhydTab();
+
+  @override
+  ConsumerState<_OpenwhydTab> createState() => _OpenwhydTabState();
+}
+
+class _OpenwhydTabState extends ConsumerState<_OpenwhydTab> {
+  final _playlistController = TextEditingController();
+  String? _playlistKey;
+
+  @override
+  void dispose() {
+    _playlistController.dispose();
+    super.dispose();
+  }
+
+  void _snack(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _getRecommendations(PlaylistInfo info, List<Track> tracks) {
+    if (tracks.length < minUsableTracks) {
+      _snack('Need at least $minUsableTracks tracks — '
+          'this playlist has ${tracks.length}.');
+      return;
+    }
+    ref.read(generationProvider.notifier).reset();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => GeneratingScreen(
+          args: GenerationArgs(
+            surprise: false,
+            seedName: info.name,
+            seedPlaylistId: info.id,
+            seedPlatformId: 'openwhyd',
+            tracks: tracks,
+            settings: const DiscoverySettings(
+              songCount: defaultSongCount,
+              albumCount: defaultAlbumCount,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text(
+          'Openwhyd playlists are curated lists of tracks from other '
+          'platforms — each track opens on its original site. Nothing '
+          'here mixes into your main recommendations.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 16),
+        Text('Import a public Openwhyd playlist',
+            style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _playlistController,
+                decoration: const InputDecoration(
+                  hintText: 'openwhyd.org/<user>/playlist/<number>',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.url,
+                onSubmitted: (_) => _import(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: _import,
+              child: const Text('Import'),
+            ),
+          ],
+        ),
+        if (_playlistKey != null) ...[
+          const SizedBox(height: 8),
+          _OpenwhydPlaylistView(
+            playlistKey: _playlistKey!,
+            onRecommendations: _getRecommendations,
+          ),
+        ],
+      ],
+    );
+  }
+
+  void _import() {
+    final text = _playlistController.text.trim();
+    if (text.isEmpty) {
+      _snack('Paste an Openwhyd playlist link first.');
+      return;
+    }
+    final parsed = OpenwhydClient.parsePlaylistLink(text);
+    if (parsed == null) {
+      _snack('That doesn\'t look like an Openwhyd playlist link.');
+      return;
+    }
+    setState(() => _playlistKey = '${parsed.user}::${parsed.playlistId}');
+  }
+}
+
+/// An imported Openwhyd playlist: track list + "Get recommendations".
+/// Each row opens its original source-platform page.
+class _OpenwhydPlaylistView extends ConsumerWidget {
+  final String playlistKey;
+  final void Function(PlaylistInfo, List<Track>) onRecommendations;
+
+  const _OpenwhydPlaylistView({
+    required this.playlistKey,
+    required this.onRecommendations,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final load = ref.watch(openwhydPlaylistProvider(playlistKey));
+    return load.when(
+      data: (data) {
+        if (data.error != null) {
+          return _ErrorRow(
+            message: data.error!,
+            onRetry: () =>
+                ref.invalidate(openwhydPlaylistProvider(playlistKey)),
+          );
+        }
+        final info = data.info!;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.queue_music, size: 40),
+              title: Text(info.name),
+              subtitle: Text(
+                  '${info.owner ?? 'Openwhyd'} · ${data.tracks.length} tracks'),
+            ),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => onRecommendations(info, data.tracks),
+                child: const Text('Get recommendations'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            // The export posts carry no stream URL; rows open their
+            // original source-platform pages instead.
+            _OpenwhydTrackList(tracks: data.tracks),
+          ],
+        );
+      },
+      loading: () => const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (e, _) => _ErrorRow(
+        message: 'Couldn\'t import that Openwhyd playlist.',
+        onRetry: () =>
+            ref.invalidate(openwhydPlaylistProvider(playlistKey)),
+      ),
+    );
+  }
+}
+
+/// Openwhyd track rows: title/artist plus an "open original" button.
+/// The eId stored on [Track.platformTrackId] is translated back to its
+/// source URL with [OpenwhydClient.originalUrl].
+class _OpenwhydTrackList extends StatelessWidget {
+  final List<Track> tracks;
+
+  const _OpenwhydTrackList({required this.tracks});
+
+  @override
+  Widget build(BuildContext context) {
+    if (tracks.isEmpty) {
+      return Text(
+        'Nothing here yet.',
+        style: Theme.of(context).textTheme.bodySmall,
+      );
+    }
+    final rows = <Widget>[];
+    for (final track in tracks) {
+      // No button when the eId prefix is unknown: tapping a dead button
+      // would be worse than showing none.
+      final url = track.platformTrackId == null
+          ? null
+          : OpenwhydClient.originalUrl({'eId': track.platformTrackId});
+      rows.add(
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: track.imageUrl != null
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: Image.network(track.imageUrl!,
+                      width: 48, height: 48, fit: BoxFit.cover),
+                )
+              : const Icon(Icons.audiotrack, size: 40),
+          title: Text(track.title,
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Text('From Openwhyd · ${track.artist}',
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+          trailing: url == null
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.open_in_new),
+                  onPressed: () async {
+                    await openLinkInAppFirst(Uri.parse(url));
+                  },
+                ),
+        ),
+      );
+    }
+    return Column(children: rows);
   }
 }
