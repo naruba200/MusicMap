@@ -516,6 +516,28 @@ void main() {
       expect(scored[1].reasons, ['From Deezer']);
     });
 
+    test('similar-artist expansion adds new artists, not duplicates',
+        () {
+      // The provider's 1c step scores similar-artist top tracks as
+      // 0.4-weight fallbacks; they must surface new artists while
+      // seed tracks themselves stay excluded.
+      final scored = RecommendationEngine.scoreCandidates(
+        seeds: [_t('Seed Artist', 'Seed Song')],
+        similarBySeed: const {},
+        fallbackBySeed: {
+          0: [
+            _s('New Artist', 'New Song'),
+            _s('Seed Artist', 'Seed Song'),
+          ],
+        },
+        fallbackReasonBySeed: {0: 'Similar artists to Seed Artist'},
+      );
+      expect(scored.length, 1);
+      expect(scored.single.track.artist, 'New Artist');
+      expect(scored.single.score, closeTo(0.4, 0.001));
+      expect(scored.single.reasons, ['Similar artists to Seed Artist']);
+    });
+
     test('fallback rank weight decays and seed tracks are excluded', () {
       final scored = RecommendationEngine.scoreCandidates(
         seeds: [_t('Seed Artist', 'Seed Song')],
