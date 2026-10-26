@@ -11,6 +11,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
 import '../../data/engine/recommendation_engine.dart';
+import '../../data/enrichment/album_enrichment.dart';
+import '../../data/enrichment/discogs_client.dart';
 import '../../data/enrichment/enrichment_cache.dart';
 import '../../data/enrichment/enrichment_models.dart';
 import '../../data/enrichment/musicbrainz_client.dart';
@@ -65,6 +67,9 @@ class GenerationResult {
   /// Post-score MusicBrainz annotations, keyed by normalized key.
   /// Never affects scores or order.
   final Map<String, TrackEnrichment> enrichments;
+  /// Post-score Discogs annotations (Phase 2, step 2), keyed by
+  /// artist|album key. Never affects scores or order.
+  final Map<String, AlbumEnrichment> albumEnrichments;
 
   const GenerationResult({
     required this.songs,
@@ -75,6 +80,7 @@ class GenerationResult {
     required this.skippedSeeds,
     this.sparseExplanation,
     this.enrichments = const {},
+    this.albumEnrichments = const {},
   });
 
   Map<String, dynamic> toJson() => {
@@ -89,6 +95,11 @@ class GenerationResult {
         if (enrichments.isNotEmpty)
           'enrichments': {
             for (final e in enrichments.entries) e.key: e.value.toJson()
+          },
+        if (albumEnrichments.isNotEmpty)
+          'albumEnrichments': {
+            for (final e in albumEnrichments.entries)
+              e.key: e.value.toJson()
           },
       };
 
@@ -111,6 +122,13 @@ class GenerationResult {
           (k, v) => MapEntry(
               k.toString(),
               TrackEnrichment.fromJson(
+                  (v as Map).cast<String, dynamic>())),
+        ),
+        albumEnrichments: ((json['albumEnrichments'] as Map?) ?? {})
+            .map(
+          (k, v) => MapEntry(
+              k.toString(),
+              AlbumEnrichment.fromJson(
                   (v as Map).cast<String, dynamic>())),
         ),
       );
@@ -192,6 +210,11 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
 
   /// MusicBrainz enrichment: plain Dio, 1 req/s, never aborts.
   late final MusicBrainzClient _musicBrainz = MusicBrainzClient();
+
+  /// Discogs enrichment: unauthenticated known-release fetches.
+  /// Pass a user-supplied token here only if the user provides one
+  /// (never commit a real token); null keeps token-free resolution.
+  late final DiscogsClient _discogs = DiscogsClient();
   bool _cancelled = false;
 
   GenerationNotifier(this._dio, this._history, this._favorites)
@@ -662,6 +685,11 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       if (_cancelled) return _abort();
       final enrichments = await _enrichTopTracks(enriched);
       if (_cancelled) return _abort();
+      // 7. Discogs album enrichment: top 5 albums only, cached
+      // 30 days. Annotates only, never rescores.
+      final albumEnrichments =
+          await _enrichTopAlbums(albums, enrichments);
+      if (_cancelled) return _abort();
       // Sparse-result explanation (Phase 1): when the sources ran dry
       // and the list came up short, say so instead of silently
       // showing few songs.
@@ -686,6 +714,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           skippedSeeds: skipped,
           sparseExplanation: sparseExplanation,
           enrichments: enrichments,
+          albumEnrichments: albumEnrichments,
         ),
         seedPlaylistId: seedPlaylistId,
         seedPlatformId: seedPlatformId,
@@ -746,6 +775,10 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       if (_cancelled) return _abort();
       final enrichments = await _enrichTopTracks(songs);
       if (_cancelled) return _abort();
+      // Discogs album enrichment, as in the playlist path.
+      final albumEnrichments =
+          await _enrichTopAlbums(albums, enrichments);
+      if (_cancelled) return _abort();
 
       await _finishRun(
         result: GenerationResult(
@@ -756,6 +789,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           seedCount: 0,
           skippedSeeds: 0,
           enrichments: enrichments,
+          albumEnrichments: albumEnrichments,
         ),
         seedPlaylistId: null,
         seedPlatformId: null,
@@ -766,6 +800,29 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       state = GenerationState(error: e.message, canRetry: true);
     } catch (e) {
       state = GenerationState(error: 'Something went wrong: $e', canRetry: true);
+    }
+  }
+
+  /// Post-score Discogs enrichment for a run's top albums.
+  /// Cache opens lazily; uncached on open failure. Any failure
+  /// returns an empty map — enrichment never fails a run.
+  Future<Map<String, AlbumEnrichment>> _enrichTopAlbums(
+      List<AlbumRec> albums,
+      Map<String, TrackEnrichment> trackEnrichments) async {
+    try {
+      _setProgress('Enriching top albums (Discogs)', 0, 1);
+      DiscogsAlbumCache? cache;
+      try {
+        cache = await DiscogsAlbumCache.open();
+      } catch (_) {
+        cache = null;
+      }
+      final out = await DiscogsEnricher(_discogs, _musicBrainz, cache)
+          .enrichAlbums(albums, trackEnrichments);
+      _setProgress('Enriching top albums (Discogs)', 1, 1);
+      return out;
+    } catch (_) {
+      return const {};
     }
   }
 
