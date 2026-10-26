@@ -16,6 +16,12 @@ const String soundCloudClientId = 'YOUR_SOUNDCLOUD_CLIENT_ID';
 /// recommendation engine in M2.
 const String lastFmApiKey = 'afe16fee1f96d0177b7d691f4b7bc89c';
 
+/// Jamendo API client_id (https://devportal.jamendo.com — free reads).
+/// Placeholder in the repo: replace locally with your own id, never commit
+/// a real one. Until it is set, the Jamendo Discover tab shows a setup
+/// hint instead of making calls.
+const String jamendoClientId = 'YOUR_JAMENDO_CLIENT_ID';
+
 /// Supported platform IDs.
 class PlatformIds {
   static const String spotify = 'spotify';

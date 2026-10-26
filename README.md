@@ -75,6 +75,10 @@ share intents is Android-only and is skipped on desktop.
 - **Audius (Phase 4)**: no key needed. The discovery host is resolved
   from `https://api.audius.co` at runtime (hard-coded fallback host if
   that lookup fails); all calls send `app_name=MusicMan`.
+- **Jamendo (Phase 4)**: free `client_id` from
+  https://devportal.jamendo.com, put in `jamendoClientId`
+  (`lib/core/constants.dart`) locally — never commit a real id. Until
+  it is set, the Jamendo Discover tab shows a setup hint.
 - **YouTube Music full playlists (Phase 4a)**: no key needed. The
   WEB_REMIX client caps a playlist shelf at 100 tracks and its
   continuation token dead-ends, so the adapter now also walks the same
