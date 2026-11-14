@@ -39,6 +39,11 @@ dependencies:
   xml: ^6.5.0
   # 30-second preview playback (no OAuth needed)
   audioplayers: ^6.0.0
+  # Android media notification player (status-bar shade): the shared
+  # player drives an audio_service AudioHandler; 0.18.19 is the latest
+  # on pub.dev (verified 2026-11-14), needs SDK ^3.6.0 / Flutter
+  # >=3.27.0 — both satisfied (Flutter 3.50 / Dart 3.13).
+  audio_service: ^0.18.19
 
 dev_dependencies:
   flutter_test:
