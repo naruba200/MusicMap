@@ -2,15 +2,16 @@
 
 Paste a playlist link. Get music you'll actually like.
 
-Music Man turns any Deezer or YouTube Music playlist into personalized song
-and album recommendations — powered by real listening data, with
-plain-English explanations of *why* each pick fits your taste.
+Music Man turns any Deezer, YouTube Music, or Spotify playlist into
+personalized song and album recommendations — powered by real listening
+data, with plain-English explanations of *why* each pick fits your taste.
 
 ## Features
 
-- **Playlist intake** — paste a Deezer or YouTube Music link; 500+ track
-  playlists load fully (paginated, virtualized list). YouTube Music is
-  beta, but full playlists import with no key (see below).
+- **Playlist intake** — paste a Deezer, YouTube Music, or Spotify link;
+  500+ track playlists load fully (paginated, virtualized list). YouTube
+  Music and Spotify are beta, but full playlists import with no key
+  (see below).
 - **Recommendation engine** — Last.fm-powered scoring (rank-decay,
   genre/mood boosts, fresh-finds): 30–150 songs and 5–30 albums per run,
   each with an explanation.
@@ -62,11 +63,24 @@ share intents is Android-only and is skipped on desktop.
 
 ## Keys & setup notes
 
-- **Spotify**: **parked for v1** (adapter kept in-repo). Since Feb 2026
-  Spotify blocks Dev Mode apps from the Web API unless the dashboard
-  account holds Premium, and playlist creation needs user OAuth — so v1
-  does intake via Deezer (no auth) and links out via Spotify search URLs
-  (no auth).
+- **Spotify** (beta): paste a playlist link, sign in once in the
+  in-app WebView with your own Spotify account, and the app imports
+  the tracks. The session (the `sp_dc` cookie) is stored in secure
+  storage on your device and reused — you only sign in again if
+  Spotify rejects it. No developer key, no OAuth client id/secret.
+  Honest limits: reads go through Spotify's internal web-player API
+  (the same endpoints the web player uses), NOT the official Web API
+  — the Feb 2026 Dev Mode change blocks the official API unless the
+  dashboard account holds Premium. That internal API is undocumented
+  and may break if Spotify changes it; the app says so plainly
+  instead of failing silently. Tracks Spotify restricts or removed
+  are skipped and counted ("311 of 320 tracks readable — 9 restricted
+  by Spotify"), never silently dropped. After the import, **Check
+  YouTube matches** resolves each track to YouTube (best-effort:
+  YouTube may pick a cover or live version), and **Save to YouTube**
+  opens the matched songs as YouTube / YouTube Music playlists via
+  TLGG links (≤50 songs per link; unmatched songs are listed, not
+  dropped) — tap Save in YouTube to keep the playlist.
 - **Deezer**: no key needed for public playlists — the zero-setup intake
   path.
 - **SoundCloud**: parked for v1 — SoundCloud now requires an Artist Pro

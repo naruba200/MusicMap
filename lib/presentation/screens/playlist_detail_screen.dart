@@ -16,6 +16,7 @@ import '../providers/providers.dart';
 import '../widgets/favorite_button.dart';
 import '../widgets/preview_button.dart';
 import '../widgets/spotify_youtube_review.dart';
+import '../widgets/youtube_export_sheet.dart';
 import 'generating_screen.dart';
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
@@ -578,6 +579,20 @@ class _PlaylistDetailScreenState
               };
             }),
           ),
+          // Save to YouTube (push 4): reuses the review's resolution —
+          // no second resolve. Only when something matched.
+          if (canSaveToYouTube(_youTubeResolution)) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () => showYouTubeExportResultSheet(
+                    context, _youTubeResolution!),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Save to YouTube'),
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
         ],
         Text('Tracks (${data.tracks.length})',

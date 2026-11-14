@@ -47,7 +47,16 @@ Future<void> showYouTubeExportSheet(
   final resolution = outcome.resolution;
   if (resolution == null || resolution.cancelled) return;
   if (!context.mounted) return;
-  await showModalBottomSheet(
+  await showYouTubeExportResultSheet(context, resolution);
+}
+
+/// Shows the chunk buttons + unmatched list for a finished
+/// [ExportResolution]. Used by the export sheet after resolving, and
+/// by the Spotify detail screen's Save to YouTube, which reuses the
+/// review's resolution instead of resolving twice.
+Future<void> showYouTubeExportResultSheet(
+    BuildContext context, ExportResolution resolution) {
+  return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     builder: (_) => _ExportResultSheet(resolution: resolution),

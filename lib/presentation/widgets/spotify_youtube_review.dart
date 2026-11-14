@@ -34,6 +34,11 @@ String youTubeMatchSummary({required int matched, required int total}) {
   return '$matched of $total found on YouTube — $unmatched unmatched';
 }
 
+/// True when a finished review has at least one YouTube-matched song
+/// to save (a resolution with no chunks saves nothing).
+bool canSaveToYouTube(ExportResolution? resolution) =>
+    resolution != null && resolution.chunks.isNotEmpty;
+
 class SpotifyYouTubeReview extends ConsumerStatefulWidget {
   final List<Track> tracks;
   final void Function(ExportResolution resolution) onResolved;
