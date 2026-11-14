@@ -7,12 +7,15 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../core/constants.dart';
 import '../../core/time_ago.dart';
+import '../../data/engine/recommendation_engine.dart';
+import '../../data/export/youtube_export.dart';
 import '../../data/models/music_models.dart';
 import '../../data/platforms/music_platform.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
 import '../widgets/favorite_button.dart';
 import '../widgets/preview_button.dart';
+import '../widgets/spotify_youtube_review.dart';
 import 'generating_screen.dart';
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
@@ -43,7 +46,17 @@ class _PlaylistDetailScreenState
   bool _rescanning = false;
   bool _retrying = false;
 
+  /// YouTube-match review state (Spotify only, push 3): the finished
+  /// resolution, plus the matched tracks as normalized keys for the
+  /// per-row marks. Kept (not re-resolved) so push 4's Save to YouTube
+  /// reuses the same resolution.
+  ExportResolution? _youTubeResolution;
+  Set<String> _youTubeMatchedKeys = const {};
+
   String get _detailKey => '${widget.platformId}::${widget.playlistId}';
+
+  bool _isYouTubeMatched(Track track) => _youTubeMatchedKeys.contains(
+      RecommendationEngine.normalizeKey(track.artist, track.title));
 
   void _snack(String message) {
     ScaffoldMessenger.of(context)
@@ -219,6 +232,18 @@ class _PlaylistDetailScreenState
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // YouTube-match mark (Spotify review, push 3): shown
+              // once the review has run for this playlist.
+              if (_youTubeResolution != null)
+                Icon(
+                  _isYouTubeMatched(t)
+                      ? Icons.check_circle
+                      : Icons.close,
+                  size: 18,
+                  color: _isYouTubeMatched(t)
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               FavoriteButton(track: t),
               PreviewButton(track: t),
             ],
@@ -232,6 +257,15 @@ class _PlaylistDetailScreenState
     final theme = Theme.of(context);
     final info = data.info;
     final platform = data.platform;
+    // Spotify skips unreadable items (restricted/removed tracks): say
+    // how many of the playlist's total were readable instead of
+    // presenting the partial list as complete. Other platforms only
+    // show this when their import comes up short too.
+    final readableLabel = readableCountLabel(
+      total: info.trackCount,
+      readable: data.tracks.length,
+      platformName: platform.displayName,
+    );
     final saved = ref
         .watch(savedPlaylistsProvider)
         .where((s) =>
@@ -290,6 +324,14 @@ class _PlaylistDetailScreenState
                     '${saved != null ? ' · scanned ${timeAgo(saved.lastScannedAt)}' : ''}',
                     style: theme.textTheme.bodySmall,
                   ),
+                  if (readableLabel != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        readableLabel,
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
                   // Phase 4a: the import stopped early (e.g. YouTube
                   // Music's 100-track shelf cap with a dead-end
                   // continuation). Say so plainly instead of presenting
@@ -520,6 +562,24 @@ class _PlaylistDetailScreenState
           ),
         ),
         const SizedBox(height: 8),
+
+        // Spotify import review (push 3): resolve the imported tracks
+        // to YouTube and mark each row matched/unmatched.
+        if (platform.id == PlatformIds.spotify) ...[
+          SpotifyYouTubeReview(
+            tracks: data.tracks,
+            onResolved: (resolution) => setState(() {
+              _youTubeResolution = resolution;
+              _youTubeMatchedKeys = {
+                for (final s in resolution.songs)
+                  if (s.matched)
+                    RecommendationEngine.normalizeKey(
+                        s.track.artist, s.track.title),
+              };
+            }),
+          ),
+          const SizedBox(height: 8),
+        ],
         Text('Tracks (${data.tracks.length})',
             style: theme.textTheme.titleSmall),
       ],
