@@ -10,6 +10,8 @@ import 'package:music_man/data/platforms/platform_registry.dart';
 import 'package:music_man/data/platforms/soundcloud_platform.dart';
 import 'package:music_man/data/platforms/spotify_platform.dart';
 import 'package:music_man/data/platforms/youtube_music_platform.dart';
+import 'package:music_man/data/spotify/spotify_client.dart';
+import 'package:music_man/data/spotify/spotify_session.dart';
 
 void main() {
   final dio = Dio();
@@ -24,7 +26,8 @@ void main() {
   });
 
   group('Spotify link parsing', () {
-    final platform = SpotifyPlatform(dio, TokenStore(), OAuthRedirectListener());
+    final platform =
+        SpotifyPlatform(SpotifyInternalClient(dio, SpotifySession()));
 
     test('parses open.spotify.com playlist URLs', () {
       final ref = platform.parseLink(
@@ -107,12 +110,14 @@ void main() {
 
   group('PlatformRegistry.parseAnyLink', () {
     test('routes each URL to the right platform', () {
-      // Spotify is parked for v1 (not in the registry): its links no longer
-      // resolve via parseAnyLink, even though SpotifyPlatform.parseLink
-      // itself still works (tested above).
+      // Spotify is back in the registry (internal web-player API, 2026-11-14):
+      // its links resolve via parseAnyLink like the other platforms.
       expect(
-          registry.parseAnyLink('https://open.spotify.com/playlist/abc123'),
-          isNull);
+          registry
+              .parseAnyLink('https://open.spotify.com/playlist/abc123')
+              ?.platform
+              .id,
+          PlatformIds.spotify);
       expect(
           registry
               .parseAnyLink('https://www.deezer.com/playlist/12345')

@@ -43,8 +43,9 @@ class _SpotifyLoginScreenState extends State<SpotifyLoginScreen> {
   /// previously-logged-in session is captured on the first load.
   Future<void> _captureSpDc() async {
     if (_captured || !mounted) return;
-    final cookies = await WebViewCookieManager()
-        .getCookies(Uri.parse('https://open.spotify.com'));
+    final cookies = await WebViewCookieManager().getCookies(
+      domain: Uri.parse('https://open.spotify.com'),
+    );
     for (final cookie in cookies) {
       if (cookie.name == 'sp_dc' && cookie.value.isNotEmpty) {
         _captured = true;
