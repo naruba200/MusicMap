@@ -18,7 +18,12 @@ import '../providers/generation_provider.dart';
 class PreviewButton extends ConsumerWidget {
   final Track track;
 
-  const PreviewButton({super.key, required this.track});
+  /// The list the track was played from (results, playlist, album,
+  /// Discover tab) — it becomes the shared player's next/previous
+  /// queue. Without one the track plays on its own.
+  final List<Track>? queue;
+
+  const PreviewButton({super.key, required this.track, this.queue});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -30,10 +35,15 @@ class PreviewButton extends ConsumerWidget {
     // playing key matches even for remaster-suffixed titles.
     final key =
         RecommendationEngine.normalizeKey(track.artist, track.title);
-    final isPlaying = playerState.valueOrNull == key;
+    final isPlaying =
+        playerState.isPlaying && playerState.currentKey == key;
     final isResolving =
-        playerState is AsyncLoading && player.resolvingKey == key;
-    final isFullTrack = player.previewSourceFor(track) == 'audius';
+        playerState.isResolving && playerState.resolvingKey == key;
+    // Any non-preview resolution is a full track (Audius search or a
+    // stream handed to playStream, e.g. Jamendo) — labelled without a
+    // source name, since the source is not always Audius.
+    final source = player.previewSourceFor(track);
+    final isFullTrack = source != null && source != 'preview';
 
     if (isResolving) {
       return const Padding(
@@ -50,9 +60,9 @@ class PreviewButton extends ConsumerWidget {
       icon: Icon(isPlaying ? Icons.pause : Icons.play_circle_outline,
           color: isPlaying ? Theme.of(context).colorScheme.primary : null),
       tooltip: isFullTrack
-          ? (isPlaying ? 'Pause full track (Audius)' : 'Play full track (Audius)')
+          ? (isPlaying ? 'Pause full track' : 'Play full track')
           : (isPlaying ? 'Pause preview' : 'Play preview'),
-      onPressed: () => player.play(track),
+      onPressed: () => player.play(track, queue: queue),
     );
   }
 }

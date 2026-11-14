@@ -13,6 +13,7 @@ import 'data/repositories/favorites_repository.dart';
 import 'data/repositories/history_repository.dart';
 import 'data/repositories/playlist_repository.dart';
 import 'data/repositories/settings_repository.dart';
+import 'presentation/providers/generation_provider.dart';
 import 'presentation/providers/news_provider.dart';
 import 'presentation/providers/providers.dart';
 import 'presentation/screens/screens.dart';
@@ -127,6 +128,20 @@ class _RootScaffold extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final index = ref.watch(tabIndexProvider);
+    // Playback failures surface once as a small bottom message with
+    // the reason (item 3): the player bumps errorSeq per failure, so
+    // the same failure is never shown twice.
+    ref.listen(
+      audioPlayerProvider.select((s) => s.errorSeq),
+      (previous, next) {
+        if (next == 0) return;
+        final message = ref.read(audioPlayerProvider).lastError;
+        if (message == null) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      },
+    );
     return Scaffold(
       body: IndexedStack(index: index, children: _screens),
       bottomNavigationBar: NavigationBar(

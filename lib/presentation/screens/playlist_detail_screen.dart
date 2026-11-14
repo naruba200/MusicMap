@@ -246,7 +246,7 @@ class _PlaylistDetailScreenState
                       : Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               FavoriteButton(track: t),
-              PreviewButton(track: t),
+              PreviewButton(track: t, queue: tracks),
             ],
           ),
         );

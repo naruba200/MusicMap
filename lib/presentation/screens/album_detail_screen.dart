@@ -111,7 +111,12 @@ class AlbumDetailScreen extends ConsumerWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         FavoriteButton(track: track),
-                        PreviewButton(track: track),
+                        PreviewButton(
+                          track: track,
+                          queue: [
+                            for (final s in album.songs) s.track
+                          ],
+                        ),
                         IconButton(
                           icon: const Icon(Icons.open_in_new),
                           tooltip: 'Open in…',

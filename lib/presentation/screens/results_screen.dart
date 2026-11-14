@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../core/constants.dart';
 import '../../data/engine/recommendation_engine.dart';
+import '../../data/models/music_models.dart';
 import '../../data/enrichment/album_enrichment.dart';
 import '../../data/enrichment/enrichment_models.dart';
 import '../../data/lastfm/lastfm_client.dart';
@@ -152,7 +153,10 @@ class ResultsScreen extends ConsumerWidget {
             RecommendationEngine.normalizeKey(
                 scored.track.artist, scored.track.title)];
         return _SongRow(
-            rank: i + 1, scored: scored, enrichment: enrichment);
+            rank: i + 1,
+            scored: scored,
+            queue: [for (final s in result.songs) s.track],
+            enrichment: enrichment);
       },
     );
   }
@@ -202,11 +206,18 @@ class _SongRow extends StatelessWidget {
   final int rank;
   final ScoredTrack scored;
 
+  /// The full result list, so the shared player's next/previous
+  /// buttons walk the results.
+  final List<Track> queue;
+
   /// MusicBrainz annotation for this track, if any.
   final TrackEnrichment? enrichment;
 
   const _SongRow(
-      {required this.rank, required this.scored, this.enrichment});
+      {required this.rank,
+      required this.scored,
+      required this.queue,
+      this.enrichment});
 
   @override
   Widget build(BuildContext context) {
@@ -259,7 +270,7 @@ class _SongRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           FavoriteButton(track: track),
-          PreviewButton(track: track),
+          PreviewButton(track: track, queue: queue),
           IconButton(
             icon: const Icon(Icons.lyrics_outlined),
             tooltip: 'Lyrics',
