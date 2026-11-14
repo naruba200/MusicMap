@@ -2,7 +2,6 @@
 // core recommendations. Audius tracks play in full inside this tab only;
 // nothing here is merged into the main Last.fm recommendation pool.
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -11,10 +10,12 @@ import '../../data/discover/audius_client.dart';
 import '../../data/discover/jamendo_client.dart';
 import '../../data/discover/mixcloud_client.dart';
 import '../../data/discover/openwhyd_client.dart';
+import '../../data/engine/recommendation_engine.dart';
 import '../../data/platforms/open_in_app.dart';
 import '../../data/models/music_models.dart';
 import '../providers/discover_provider.dart';
 import '../providers/generation_provider.dart';
+import '../widgets/preview_button.dart';
 import 'generating_screen.dart';
 
 /// Discover screen: a TabBar with one tab per Phase 4 source.
@@ -52,31 +53,11 @@ class DiscoverScreen extends ConsumerWidget {
   }
 }
 
-/// A small in-tab audio player: one AudioPlayer per tab, play/pause by
-/// track id, stopped when the tab is disposed. Full streams only — this
-/// player never touches the core preview player.
-class _TabPlayer {
-  final AudioPlayer _player = AudioPlayer();
-  String? playingId;
-
-  Future<void> toggle(String id, String url) async {
-    if (playingId == id) {
-      await _player.pause();
-      playingId = null;
-    } else {
-      await _player.stop();
-      await _player.play(UrlSource(url));
-      playingId = id;
-    }
-  }
-
-  Future<void> dispose() async {
-    await _player.stop();
-    await _player.dispose();
-  }
-}
-
 // -- Audius tab -------------------------------------------------------------
+// Playback here goes through the shared player (audioPlayerProvider):
+// the rows below use PreviewButton with the tab's track list as the
+// queue, so a Discover stream keeps playing — with next/previous —
+// after leaving the tab, and the mini-player shows it.
 
 class _AudiusTab extends ConsumerStatefulWidget {
   const _AudiusTab();
@@ -101,13 +82,11 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
   final _playlistController = TextEditingController();
   String _search = '';
   String? _playlistId;
-  final _player = _TabPlayer();
 
   @override
   void dispose() {
     _searchController.dispose();
     _playlistController.dispose();
-    _player.dispose();
     super.dispose();
   }
 
@@ -175,9 +154,7 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
           data: (load) => _TrackList(
             load: load,
             sourceLabel: 'From Audius',
-            player: _player,
             onRetry: () => ref.invalidate(audiusTrendingProvider(_genre)),
-            onRefresh: () => setState(() {}),
           ),
           loading: () => const Padding(
             padding: EdgeInsets.all(16),
@@ -220,8 +197,6 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
             query: _search,
             sourceLabel: 'From Audius',
             errorMessage: 'Audius search failed.',
-            player: _player,
-            onRefresh: () => setState(() {}),
           ),
         ],
         const SizedBox(height: 24),
@@ -261,9 +236,7 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
             showCover: true,
             sourceLabel: 'From Audius',
             importErrorMessage: 'Couldn\'t import that Audius playlist.',
-            player: _player,
             onRecommendations: _getRecommendations,
-            onRefresh: () => setState(() {}),
           ),
         ],
       ],
@@ -292,16 +265,12 @@ class _DiscoverSearchResults extends ConsumerWidget {
   final String query;
   final String sourceLabel;
   final String errorMessage;
-  final _TabPlayer player;
-  final VoidCallback onRefresh;
 
   const _DiscoverSearchResults({
     required this.searchProvider,
     required this.query,
     required this.sourceLabel,
     required this.errorMessage,
-    required this.player,
-    required this.onRefresh,
   });
 
   @override
@@ -311,9 +280,7 @@ class _DiscoverSearchResults extends ConsumerWidget {
       data: (load) => _TrackList(
         load: load,
         sourceLabel: sourceLabel,
-        player: player,
         onRetry: () => ref.invalidate(searchProvider(query)),
-        onRefresh: onRefresh,
       ),
       loading: () => const Padding(
         padding: EdgeInsets.all(16),
@@ -341,9 +308,7 @@ class _DiscoverPlaylistView extends ConsumerWidget {
   final bool showCover;
   final String sourceLabel;
   final String importErrorMessage;
-  final _TabPlayer player;
   final void Function(PlaylistInfo, List<Track>) onRecommendations;
-  final VoidCallback onRefresh;
 
   const _DiscoverPlaylistView({
     required this.playlistId,
@@ -354,9 +319,7 @@ class _DiscoverPlaylistView extends ConsumerWidget {
     required this.showCover,
     required this.sourceLabel,
     required this.importErrorMessage,
-    required this.player,
     required this.onRecommendations,
-    required this.onRefresh,
   });
 
   @override
@@ -406,9 +369,7 @@ class _DiscoverPlaylistView extends ConsumerWidget {
             _TrackList(
               load: DiscoverLoad(items: data.tracks),
               sourceLabel: sourceLabel,
-              player: player,
               onRetry: () => ref.invalidate(playlistProvider(resolved)),
-              onRefresh: onRefresh,
             ),
           ],
         );
@@ -425,36 +386,28 @@ class _DiscoverPlaylistView extends ConsumerWidget {
   }
 }
 
-/// Shared track list with in-tab full-stream playback. The [load] error
-/// label is shown inline; an empty list with no error means "nothing
-/// found", not a failure.
-class _TrackList extends StatefulWidget {
+/// Shared track list with full-stream playback through the shared
+/// player. The [load] error label is shown inline; an empty list with
+/// no error means "nothing found", not a failure. Rows play via
+/// [PreviewButton] with the whole list as the queue, so next/previous
+/// walk the tab's tracks.
+class _TrackList extends StatelessWidget {
   final DiscoverLoad<Track> load;
   final String sourceLabel;
-  final _TabPlayer player;
   final VoidCallback onRetry;
-  final VoidCallback onRefresh;
 
   const _TrackList({
     required this.load,
     required this.sourceLabel,
-    required this.player,
     required this.onRetry,
-    required this.onRefresh,
   });
 
   @override
-  State<_TrackList> createState() => _TrackListState();
-}
-
-class _TrackListState extends State<_TrackList> {
-  @override
   Widget build(BuildContext context) {
-    if (widget.load.error != null) {
-      return _ErrorRow(
-          message: widget.load.error!, onRetry: widget.onRetry);
+    if (load.error != null) {
+      return _ErrorRow(message: load.error!, onRetry: onRetry);
     }
-    if (widget.load.items.isEmpty) {
+    if (load.items.isEmpty) {
       return Text(
         'Nothing here yet.',
         style: Theme.of(context).textTheme.bodySmall,
@@ -462,7 +415,7 @@ class _TrackListState extends State<_TrackList> {
     }
     return Column(
       children: [
-        for (final track in widget.load.items)
+        for (final track in load.items)
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: track.imageUrl != null
@@ -474,23 +427,11 @@ class _TrackListState extends State<_TrackList> {
                 : const Icon(Icons.audiotrack, size: 40),
             title: Text(track.title,
                 maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text('${widget.sourceLabel} · ${track.artist}',
+            subtitle: Text('$sourceLabel · ${track.artist}',
                 maxLines: 1, overflow: TextOverflow.ellipsis),
             trailing: track.streamUrl == null
                 ? null
-                : IconButton(
-                    icon: Icon(
-                      widget.player.playingId == track.platformTrackId
-                          ? Icons.pause
-                          : Icons.play_arrow,
-                    ),
-                    onPressed: () async {
-                      await widget.player.toggle(
-                          track.platformTrackId!, track.streamUrl!);
-                      if (mounted) setState(() {});
-                      widget.onRefresh();
-                    },
-                  ),
+                : PreviewButton(track: track, queue: load.items),
           ),
       ],
     );
@@ -536,13 +477,11 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
   final _playlistController = TextEditingController();
   String _search = '';
   String? _playlistId;
-  final _player = _TabPlayer();
 
   @override
   void dispose() {
     _searchController.dispose();
     _playlistController.dispose();
-    _player.dispose();
     super.dispose();
   }
 
@@ -638,8 +577,6 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
             query: _search,
             sourceLabel: 'From Jamendo',
             errorMessage: 'Jamendo search failed.',
-            player: _player,
-            onRefresh: () => setState(() {}),
           ),
         ],
         const SizedBox(height: 24),
@@ -680,18 +617,13 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
             showCover: false,
             sourceLabel: 'From Jamendo',
             importErrorMessage: 'Couldn\'t import that Jamendo playlist.',
-            player: _player,
             onRecommendations: _getRecommendations,
-            onRefresh: () => setState(() {}),
           ),
         ],
         const SizedBox(height: 24),
         Text('Radios', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 8),
-        _JamendoRadiosView(
-          player: _player,
-          onRefresh: () => setState(() {}),
-        ),
+        const _JamendoRadiosView(),
       ],
     );
   }
@@ -700,24 +632,16 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
 /// Search results for the Jamendo tab (track list with in-tab playback).
 /// Curated Jamendo radios. Playback is best-effort: when the radios/stream
 /// endpoint returns no stream URL, the row explains instead of failing.
-class _JamendoRadiosView extends ConsumerStatefulWidget {
-  final _TabPlayer player;
-  final VoidCallback onRefresh;
-
-  const _JamendoRadiosView({
-    required this.player,
-    required this.onRefresh,
-  });
+/// A radio plays through the shared player as a single-track queue
+/// (no duration — a live stream never reports one).
+class _JamendoRadiosView extends ConsumerWidget {
+  const _JamendoRadiosView();
 
   @override
-  ConsumerState<_JamendoRadiosView> createState() =>
-      _JamendoRadiosViewState();
-}
-
-class _JamendoRadiosViewState extends ConsumerState<_JamendoRadiosView> {
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final radios = ref.watch(jamendoRadiosProvider);
+    final playerState = ref.watch(audioPlayerProvider);
+    final player = ref.read(audioPlayerProvider.notifier);
     return radios.when(
       data: (load) {
         if (load.error != null) {
@@ -748,11 +672,27 @@ class _JamendoRadiosViewState extends ConsumerState<_JamendoRadiosView> {
                 subtitle: const Text('From Jamendo · radio'),
                 trailing: IconButton(
                   icon: Icon(
-                    widget.player.playingId == 'radio:${radio.id}'
+                    playerState.isPlaying &&
+                            playerState.currentKey ==
+                                RecommendationEngine.normalizeKey(
+                                    'Jamendo Radio', radio.name)
                         ? Icons.pause
                         : Icons.play_arrow,
                   ),
                   onPressed: () async {
+                    final radioTrack = Track(
+                      title: radio.name,
+                      artist: 'Jamendo Radio',
+                      imageUrl: radio.imageUrl,
+                      platformTrackId: 'radio:${radio.id}',
+                    );
+                    if (playerState.currentKey ==
+                            RecommendationEngine.normalizeKey(
+                                'Jamendo Radio', radio.name) &&
+                        !playerState.isResolving) {
+                      await player.togglePlayPause();
+                      return;
+                    }
                     final stream = await ref
                         .read(jamendoClientProvider)
                         .radioStreamUrl(radio.id);
@@ -768,10 +708,8 @@ class _JamendoRadiosViewState extends ConsumerState<_JamendoRadiosView> {
                       }
                       return;
                     }
-                    await widget.player
-                        .toggle('radio:${radio.id}', stream);
-                    if (mounted) setState(() {});
-                    widget.onRefresh();
+                    await player.playStream(radioTrack, stream,
+                        source: 'full');
                   },
                 ),
               ),
