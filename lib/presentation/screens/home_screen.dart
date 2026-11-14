@@ -255,7 +255,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   decoration: InputDecoration(
                     hintText: platform.id == PlatformIds.youTubeMusic
                         ? 'https://music.youtube.com/playlist?list=…'
-                        : 'https://www.deezer.com/playlist/…',
+                        : platform.id == PlatformIds.spotify
+                            ? 'https://open.spotify.com/playlist/…'
+                            : 'https://www.deezer.com/playlist/…',
                     border: const OutlineInputBorder(),
                   ),
                   keyboardType: TextInputType.url,
@@ -348,8 +350,11 @@ class _PlaylistPicker extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     if (platform.requiresAuthForLibrary && !signedIn) {
       return Text(
-        'Connect ${platform.displayName} to browse your playlists, '
-        'or paste a link below — no sign-in needed.',
+        platform.linkNeedsAuth
+            ? 'Connect ${platform.displayName} to browse your playlists — '
+                'pasted links need your ${platform.displayName} session too.'
+            : 'Connect ${platform.displayName} to browse your playlists, '
+                'or paste a link below — no sign-in needed.',
         style: Theme.of(context).textTheme.bodySmall,
       );
     }
@@ -364,8 +369,12 @@ class _PlaylistPicker extends ConsumerWidget {
     return playlists.when(
       data: (list) {
         if (list.isEmpty) {
-          return Text('No playlists found.',
-              style: Theme.of(context).textTheme.bodySmall);
+          return Text(
+            platform.id == PlatformIds.spotify
+                ? 'Spotify imports work from pasted links — paste one below.'
+                : 'No playlists found.',
+            style: Theme.of(context).textTheme.bodySmall,
+          );
         }
         return SizedBox(
           height: 132,

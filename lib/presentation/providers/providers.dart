@@ -22,6 +22,7 @@ import '../../data/repositories/playlist_repository.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../../data/fallback/fallback_sources.dart';
 import '../screens/playlist_detail_screen.dart';
+import '../screens/spotify_login_screen.dart';
 
 /// Global navigator key so deep links can push routes from providers.
 final navigatorKey = GlobalKey<NavigatorState>();
@@ -54,6 +55,17 @@ final platformRegistryProvider = Provider<PlatformRegistry>((ref) {
     dio: ref.watch(dioProvider),
     tokenStore: ref.watch(tokenStoreProvider),
     redirectListener: ref.watch(redirectListenerProvider),
+    // The Spotify WebView login: push the login screen and return the
+    // captured sp_dc cookie (or null when the user backs out).
+    spotifyLogin: () async {
+      final state = navigatorKey.currentState;
+      if (state == null) return null;
+      return state.push<String>(
+        MaterialPageRoute(
+          builder: (_) => const SpotifyLoginScreen(),
+        ),
+      );
+    },
   );
 });
 

@@ -50,6 +50,12 @@ abstract class MusicPlatform {
   /// Link intake always works without auth for public playlists.
   bool get requiresAuthForLibrary;
 
+  /// True when even a pasted link needs the session (Spotify: the
+  /// web-player token is minted from the user's own sp_dc cookie, and
+  /// there is no anonymous route). Defaults to false: most platforms
+  /// read public links without auth.
+  bool get linkNeedsAuth => false;
+
   // -- Auth ---------------------------------------------------------------
 
   /// Starts the OAuth flow. Completes with true when tokens are stored.

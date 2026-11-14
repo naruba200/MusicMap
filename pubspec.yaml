@@ -25,6 +25,8 @@ dependencies:
   receive_sharing_intent: ^1.8.4
   # External browser / Custom Tabs (FR-15, FR-26)
   url_launcher: ^6.2.6
+  # In-app WebView for the Spotify login (sp_dc session capture)
+  webview_flutter: ^4.14.1
   # PKCE code challenge (SHA-256)
   crypto: ^3.0.3
   # Article images (FR-23)
