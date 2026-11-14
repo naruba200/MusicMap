@@ -344,21 +344,26 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       }
     }
 
-    if (learned.isEmpty) return chartTracks;
+    return mergeLearnedFreshPool(learned: learned, chart: chartTracks);
+  }
 
-    // Merge learned tracks ahead of chart tracks, deduped by normalized key.
-    final merged = <TagTrack>[];
-    merged.addAll(learned);
-    final chartKeys = <String>{};
-    for (final t in learned) {
-      chartKeys.add(RecommendationEngine.normalizeKey(t.artist, t.title));
-    }
-    for (final t in chartTracks) {
+  /// Pure merge of learned (favorited-artist) top tracks ahead of the
+  /// global chart, deduped by normalized key. Extracted from
+  /// [_buildFreshPool] so the favorites -> Fresh Finds path is
+  /// unit-testable without Last.fm; behaviour is unchanged.
+  static List<TagTrack> mergeLearnedFreshPool({
+    required List<TagTrack> learned,
+    required List<TagTrack> chart,
+  }) {
+    if (learned.isEmpty) return chart;
+    final merged = <TagTrack>[...learned];
+    final seen = <String>{
+      for (final t in learned)
+        RecommendationEngine.normalizeKey(t.artist, t.title),
+    };
+    for (final t in chart) {
       final key = RecommendationEngine.normalizeKey(t.artist, t.title);
-      if (!chartKeys.contains(key)) {
-        merged.add(t);
-        chartKeys.add(key);
-      }
+      if (seen.add(key)) merged.add(t);
     }
     return merged;
   }
