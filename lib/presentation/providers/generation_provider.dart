@@ -26,6 +26,7 @@ import '../../data/models/music_models.dart';
 import '../../data/repositories/favorites_repository.dart';
 import '../../data/repositories/history_repository.dart';
 import '../../data/repositories/settings_repository.dart';
+import 'audio_backend.dart';
 import 'providers.dart';
 
 /// Maps a mood/genre chip label to a Last.fm tag.
@@ -1179,56 +1180,165 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   }
 }
 
-/// Manages 30-second preview playback for recommended tracks.
-/// One shared player across the app; only one preview plays at a time.
-/// Resolves missing preview URLs on demand via iTunes search.
-///
-/// The state carries the playing track key so buttons can watch it:
-/// [AsyncLoading] while a preview URL is being resolved, `data(key)`
-/// while that track plays, and `data(null)` when stopped or paused.
-/// The key of the track currently being resolved is exposed via
-/// [resolvingKey] so a button can show a spinner for its own track
-/// while the state is loading.
-class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
-  AudioPlayer? _player;
+/// Snapshot of the single shared player (mini-player, play buttons and
+/// the Android media notification all read this one state).
+class PlaybackState {
+  /// Track currently loaded (playing or paused). Null when stopped.
+  final Track? currentTrack;
+
+  /// Play queue: the list the current track was played from, so
+  /// next/previous work across screens. Empty when nothing is loaded.
+  final List<Track> queue;
+
+  /// Index of [currentTrack] in [queue], -1 when there is no queue.
+  final int queueIndex;
+
+  final bool isPlaying;
+
+  /// True while a preview URL is being resolved for a tap.
+  final bool isResolving;
+
+  /// Normalized key of the track being resolved, if any. Only
+  /// meaningful while [isResolving] is true.
+  final String? resolvingKey;
+
+  /// Playback position; [duration] is null until the backend reports
+  /// it (a live radio stream never does).
+  final Duration position;
+  final Duration? duration;
+
+  /// Human-readable reason for the last playback failure, if any.
+  /// Shown once as a SnackBar by the root scaffold; [errorSeq]
+  /// increments per failure so the scaffold can tell a new failure
+  /// from the previous one.
+  final String? lastError;
+  final int errorSeq;
+
+  const PlaybackState({
+    this.currentTrack,
+    this.queue = const [],
+    this.queueIndex = -1,
+    this.isPlaying = false,
+    this.isResolving = false,
+    this.resolvingKey,
+    this.position = Duration.zero,
+    this.duration,
+    this.lastError,
+    this.errorSeq = 0,
+  });
+
+  static const idle = PlaybackState();
+
+  /// Normalized key of [currentTrack], null when stopped.
+  String? get currentKey => currentTrack == null
+      ? null
+      : RecommendationEngine.normalizeKey(
+          currentTrack!.artist, currentTrack!.title);
+
+  bool get hasCurrentTrack => currentTrack != null;
+  bool get hasNext => queueIndex >= 0 && queueIndex + 1 < queue.length;
+  bool get hasPrevious => queueIndex > 0;
+
+  /// 0..1 progress for the mini-player bar; 0 when duration is unknown.
+  double get progressFraction {
+    final d = duration;
+    if (d == null || d.inMilliseconds <= 0) return 0;
+    return (position.inMilliseconds / d.inMilliseconds).clamp(0.0, 1.0);
+  }
+
+  PlaybackState copyWith({
+    Track? currentTrack,
+    bool clearCurrentTrack = false,
+    List<Track>? queue,
+    int? queueIndex,
+    bool? isPlaying,
+    bool? isResolving,
+    String? resolvingKey,
+    bool clearResolvingKey = false,
+    Duration? position,
+    Duration? duration,
+    bool clearDuration = false,
+    String? lastError,
+    bool clearLastError = false,
+    int? errorSeq,
+  }) =>
+      PlaybackState(
+        currentTrack:
+            clearCurrentTrack ? null : (currentTrack ?? this.currentTrack),
+        queue: queue ?? this.queue,
+        queueIndex: queueIndex ?? this.queueIndex,
+        isPlaying: isPlaying ?? this.isPlaying,
+        isResolving: isResolving ?? this.isResolving,
+        resolvingKey:
+            clearResolvingKey ? null : (resolvingKey ?? this.resolvingKey),
+        position: position ?? this.position,
+        duration: clearDuration ? null : (duration ?? this.duration),
+        lastError: clearLastError ? null : (lastError ?? this.lastError),
+        errorSeq: errorSeq ?? this.errorSeq,
+      );
+}
+
+/// Manages playback for recommended tracks — one shared player across
+/// the app; only one track plays at a time. Resolves missing preview
+/// URLs on demand via iTunes search. The queue is the list a track was
+/// played from (results, playlist, album, Discover tab), so the
+/// mini-player's next/previous buttons work across screens.
+class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
+  AudioBackend? _backend;
   final FallbackSources _fallbacks;
   final AudiusClient? _audiusClient;
-  String? _playingKey;
-  String? _resolvingKey;
   StreamSubscription<PlayerState>? _stateSub;
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration>? _durationSub;
+  /// Monotonic token: a resolve superseded by a newer tap is dropped
+  /// instead of overwriting the newer track's state.
+  int _playToken = 0;
   /// Cache of resolved preview URLs keyed by normalized track key.
   final Map<String, String> _previewCache = {};
   /// How each cached URL was resolved: 'preview' for a 30-second
-  /// iTunes/Deezer preview, 'audius' for a full Audius stream. The
-  /// button uses this to label a full track honestly, never as a
+  /// iTunes/Deezer preview, 'audius' for a full Audius stream, 'full'
+  /// for a full stream handed to playStream (e.g. Jamendo radio).
+  /// The button uses this to label a full track honestly, never as a
   /// preview. Jamendo is deliberately NOT a step here: it requires a
   /// user-supplied client_id, and no shared key is shipped in the app.
   final Map<String, String> _previewSource = {};
 
   AudioPlayerNotifier(this._fallbacks,
-      {AudioPlayer? player, AudiusClient? audiusClient})
-      : _player = player,
+      {AudioBackend? backend, AudiusClient? audiusClient})
+      : _backend = backend,
         _audiusClient = audiusClient,
-        super(const AsyncValue.data(null));
+        super(PlaybackState.idle);
 
-  /// The real player, created lazily on first actual playback so that
+  /// The real backend, created lazily on first actual playback so that
   /// constructing the notifier — and resolving a preview, which is pure
   /// Dart plus the preview cache — never touches the audio platform.
   /// (audioplayers' AudioPlayer constructor calls _create() on the
   /// platform, which has no registered plugin in a flutter_test
   /// environment; the old eager construction is what made the
   /// no-network resolvePreview test fail on CI.)
-  AudioPlayer get _audioPlayer => _player ??= AudioPlayer();
+  AudioBackend get _audio => _backend ??= AudioplayersBackend();
 
-  /// Subscribe to completion events lazily, only when audio actually
+  /// Subscribe to backend events lazily, only when audio actually
   /// plays, so constructing the notifier (and resolving a preview that
   /// turns out not to exist) never touches platform channels.
-  void _ensureStateSub() {
-    _stateSub ??= _audioPlayer.onPlayerStateChanged.listen((playerState) {
-      if (playerState == PlayerState.completed && _playingKey != null) {
-        _playingKey = null;
-        state = const AsyncValue.data(null);
+  void _ensureSubs() {
+    if (_stateSub != null) return;
+    _stateSub = _audio.onPlayerStateChanged.listen((playerState) {
+      if (playerState != PlayerState.completed) return;
+      // A finished track advances the queue; the last one stops.
+      if (state.hasNext) {
+        unawaited(_playAt(state.queueIndex + 1));
+      } else {
+        unawaited(stop());
       }
+    });
+    _positionSub = _audio.onPositionChanged.listen((pos) {
+      if (!state.hasCurrentTrack) return;
+      state = state.copyWith(position: pos);
+    });
+    _durationSub = _audio.onDurationChanged.listen((d) {
+      if (!state.hasCurrentTrack) return;
+      state = state.copyWith(duration: d);
     });
   }
 
@@ -1238,18 +1348,64 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
   String _key(Track track) =>
       RecommendationEngine.normalizeKey(track.artist, track.title);
 
-  bool get isPlaying => _playingKey != null;
+  bool get isPlaying => state.isPlaying;
 
-  String? get playingKey => _playingKey;
+  /// Normalized key of the currently playing track, null otherwise.
+  String? get playingKey => state.isPlaying ? state.currentKey : null;
 
   /// Normalized key of the track whose preview is being resolved, if
-  /// any. Only meaningful while [state] is [AsyncLoading].
-  String? get resolvingKey => _resolvingKey;
+  /// any. Only meaningful while [PlaybackState.isResolving] is true.
+  String? get resolvingKey => state.resolvingKey;
 
   /// Resolution source for [track] once it has been resolved:
-  /// 'preview' (30-second iTunes/Deezer sample) or 'audius' (full
-  /// Audius stream). Null before any resolution.
+  /// 'preview' (30-second iTunes/Deezer sample), 'audius' (full
+  /// Audius stream) or 'full' (full stream handed to playStream).
+  /// Null before any resolution.
   String? previewSourceFor(Track track) => _previewSource[_key(track)];
+
+  /// Human-readable reason for a playback failure, for the SnackBar.
+  /// [noPreview] is the "nothing playable exists" case; anything else
+  /// is a load/play error from the backend. Network-looking failures
+  /// say so; anything else stays a plain "couldn't play" instead of
+  /// leaking a long platform message into the UI.
+  static String playbackErrorMessage(Object error,
+      {bool noPreview = false}) {
+    if (noPreview) return 'No preview found for this track';
+    final detail = error is AudioPlayerException
+        ? (error.cause?.toString() ?? error.toString())
+        : error.toString();
+    if (_looksLikeNetwork(detail)) {
+      return "Couldn't load audio — check your connection";
+    }
+    return "Couldn't play this track";
+  }
+
+  static bool _looksLikeNetwork(String text) {
+    final lower = text.toLowerCase();
+    return lower.contains('socketexception') ||
+        lower.contains('unknown host') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('timed out') ||
+        lower.contains('connection') ||
+        lower.contains('network') ||
+        lower.contains('unable to load') ||
+        lower.contains('404') ||
+        lower.contains('403');
+  }
+
+  /// Record a playback failure for [track] (loaded, paused): the
+  /// mini-player still shows what failed, and bumping
+  /// [PlaybackState.errorSeq] makes the root scaffold's SnackBar fire.
+  void _reportError(
+      String message, Track track, List<Track> queue, int index) {
+    state = PlaybackState(
+      currentTrack: track,
+      queue: queue,
+      queueIndex: index,
+      lastError: message,
+      errorSeq: state.errorSeq + 1,
+    );
+  }
 
   /// Resolve a preview URL for [track] from cache, the track itself, or
   /// the on-demand chain, in order: iTunes artist+title, Deezer
@@ -1327,74 +1483,236 @@ class AudioPlayerNotifier extends StateNotifier<AsyncValue<String?>> {
     return null;
   }
 
-  Future<void> play(Track track) async {
+  /// Play [track], resolving its preview URL first. Tapping the
+  /// playing track pauses it; tapping the paused track resumes it.
+  /// [queue] is the list the track was played from (results,
+  /// playlist, album, Discover tab) — it becomes the next/previous
+  /// queue. Without a queue the track plays on its own.
+  Future<void> play(Track track, {List<Track>? queue}) async {
     final key = _key(track);
-    if (_playingKey == key) {
-      // Toggle: pause if already playing this track. No resolve needed.
-      await _audioPlayer.pause();
-      _playingKey = null;
-      state = const AsyncValue.data(null);
+    final current = state;
+    if (current.currentKey == key && !current.isResolving) {
+      if (current.isPlaying) {
+        await pause();
+      } else if (current.currentTrack != null) {
+        await resume();
+      }
       return;
     }
-    // Resolve first (loading state), so a tap on a preview-less track
-    // actually runs the on-demand lookup instead of doing nothing.
-    _resolvingKey = key;
-    state = const AsyncLoading();
+    final newQueue = queue ?? _queueFor(track);
+    final index = _indexOfKey(newQueue, key);
+    final token = ++_playToken;
+    // Resolve first (resolving state), so a tap on a preview-less
+    // track actually runs the on-demand lookup instead of doing
+    // nothing. A track already playing keeps playing meanwhile.
+    state = current.copyWith(isResolving: true, resolvingKey: key);
     final preview = await resolvePreview(track);
     // A newer tap superseded this resolve; its own state update wins.
-    if (_resolvingKey != key) return;
-    _resolvingKey = null;
+    if (token != _playToken) return;
     if (preview == null || preview.isEmpty) {
-      // No preview anywhere: restore the previous playing state
-      // (still playing another track, or stopped) instead of
-      // leaving a stale loading state behind.
-      state = AsyncValue.data(_playingKey);
+      // No preview anywhere: report why, and restore the previous
+      // playing state (still playing another track, or stopped)
+      // instead of leaving a stale resolving state behind.
+      state = current.copyWith(
+        lastError: playbackErrorMessage('', noPreview: true),
+        errorSeq: current.errorSeq + 1,
+      );
       return;
     }
-    // Stop any other track, then play this one.
-    _ensureStateSub();
-    await _audioPlayer.stop();
-    await _audioPlayer.play(UrlSource(preview));
-    _playingKey = key;
-    state = AsyncValue.data(key);
+    await _playResolved(
+      track: track,
+      url: preview,
+      queue: newQueue,
+      index: index < 0 ? 0 : index,
+      token: token,
+    );
   }
 
   /// Play an already-resolved full-stream URL (a full-song race
-  /// winner), bypassing the toggle in [play]: a preview for the same
-  /// track key that is already playing must not swallow the full
-  /// song as a "pause". Records the URL/source in the preview cache
-  /// so the shared buttons show the playing state honestly.
+  /// winner, a Discover stream, a Jamendo radio), bypassing the
+  /// toggle in [play]: a preview for the same track key that is
+  /// already playing must not swallow the full song as a "pause".
+  /// Records the URL/source in the preview cache so the shared
+  /// buttons show the playing state honestly.
   Future<void> playStream(Track track, String url,
-      {String source = 'audius'}) async {
+      {String source = 'audius', List<Track>? queue}) async {
     final key = _key(track);
-    _resolvingKey = null;
-    _ensureStateSub();
-    await _audioPlayer.stop();
-    await _audioPlayer.play(UrlSource(url));
-    _playingKey = key;
+    final newQueue = queue ?? _queueFor(track);
+    final index = _indexOfKey(newQueue, key);
+    final token = ++_playToken;
     _previewCache[key] = url;
     _previewSource[key] = source;
-    state = AsyncValue.data(key);
+    await _playResolved(
+      track: track,
+      url: url,
+      queue: newQueue,
+      index: index < 0 ? 0 : index,
+      token: token,
+    );
+  }
+
+  /// Play the track at [index] in the current queue (mini-player
+  /// next/previous, media notification, completion auto-advance).
+  Future<void> playAt(int index) async {
+    if (index < 0 || index >= state.queue.length) return;
+    await _playAt(index);
+  }
+
+  Future<void> _playAt(int index) async {
+    final queue = state.queue;
+    if (index < 0 || index >= queue.length) return;
+    final track = queue[index];
+    final token = ++_playToken;
+    state = state.copyWith(
+      isResolving: true,
+      resolvingKey: _key(track),
+    );
+    final preview = await resolvePreview(track);
+    if (token != _playToken) return;
+    if (preview == null || preview.isEmpty) {
+      // Unplayable queue entry: report why and stop on the failed
+      // track (paused) instead of spinning on the next one.
+      state = state.copyWith(
+        isPlaying: false,
+        isResolving: false,
+        clearResolvingKey: true,
+        lastError: playbackErrorMessage('', noPreview: true),
+        errorSeq: state.errorSeq + 1,
+      );
+      return;
+    }
+    await _playResolved(
+      track: track,
+      url: preview,
+      queue: queue,
+      index: index,
+      token: token,
+    );
+  }
+
+  /// Stop the backend and start [url] for [track]; on a load failure
+  /// the attempted track stays loaded (paused) with the reason in
+  /// [PlaybackState.lastError]. [token] guards against superseded
+  /// resolves.
+  Future<void> _playResolved({
+    required Track track,
+    required String url,
+    required List<Track> queue,
+    required int index,
+    required int token,
+  }) async {
+    _ensureSubs();
+    try {
+      await _audio.stop();
+      await _audio.play(url);
+    } on Object catch (e) {
+      if (token != _playToken) return;
+      _reportError(playbackErrorMessage(e), track, queue, index);
+      return;
+    }
+    if (token != _playToken) return;
+    state = state.copyWith(
+      currentTrack: track,
+      queue: queue,
+      queueIndex: index,
+      isPlaying: true,
+      isResolving: false,
+      clearResolvingKey: true,
+      position: Duration.zero,
+      clearDuration: true,
+      clearLastError: true,
+    );
+  }
+
+  /// Queue containing [track] if the current queue has it, else a
+  /// single-track queue.
+  List<Track> _queueFor(Track track) {
+    final key = _key(track);
+    if (_indexOfKey(state.queue, key) >= 0) return state.queue;
+    return [track];
+  }
+
+  int _indexOfKey(List<Track> queue, String key) {
+    for (var i = 0; i < queue.length; i++) {
+      if (_key(queue[i]) == key) return i;
+    }
+    return -1;
   }
 
   Future<void> pause() async {
-    await _player?.pause();
-    _playingKey = null;
-    _resolvingKey = null;
-    state = const AsyncValue.data(null);
+    final backend = _backend;
+    if (backend == null || !state.hasCurrentTrack) return;
+    await backend.pause();
+    state = state.copyWith(isPlaying: false);
+  }
+
+  Future<void> resume() async {
+    if (!state.hasCurrentTrack || state.isPlaying) return;
+    _ensureSubs();
+    try {
+      await _audio.resume();
+    } on Object catch (e) {
+      _reportError(playbackErrorMessage(e), state.currentTrack!,
+          state.queue, state.queueIndex);
+      return;
+    }
+    state = state.copyWith(isPlaying: true);
+  }
+
+  /// Stop playback and clear the player (the mini-player bar hides).
+  Future<void> stop() async {
+    final backend = _backend;
+    if (backend != null) {
+      await backend.stop();
+    }
+    _playToken++;
+    state = PlaybackState.idle;
+  }
+
+  Future<void> next() async {
+    if (state.hasNext) await _playAt(state.queueIndex + 1);
+  }
+
+  Future<void> previous() async {
+    // Standard behaviour: restart the track when well into it,
+    // otherwise go to the previous one.
+    if (state.position > const Duration(seconds: 3)) {
+      await seek(Duration.zero);
+      return;
+    }
+    if (state.hasPrevious) await _playAt(state.queueIndex - 1);
+  }
+
+  Future<void> seek(Duration position) async {
+    final backend = _backend;
+    if (backend == null || !state.hasCurrentTrack) return;
+    await backend.seek(position);
+    state = state.copyWith(position: position);
+  }
+
+  /// Mini-player play/pause button: pause when playing, resume the
+  /// loaded track when paused, nothing when stopped.
+  Future<void> togglePlayPause() async {
+    if (state.isPlaying) {
+      await pause();
+    } else if (state.hasCurrentTrack) {
+      await resume();
+    }
   }
 
   @override
   void dispose() {
     _stateSub?.cancel();
-    _player?.dispose();
+    _positionSub?.cancel();
+    _durationSub?.cancel();
+    _backend?.dispose();
     super.dispose();
   }
 }
 
 /// Shared audio player provider for preview playback.
 final audioPlayerProvider =
-    StateNotifierProvider<AudioPlayerNotifier, AsyncValue<String?>>(
+    StateNotifierProvider<AudioPlayerNotifier, PlaybackState>(
   // Audius is constructed here with a plain Dio (same timeouts as the
   // Discover tab's Dio) rather than watched from discover_provider, so
   // generation does not depend on the Discover provider file. It is

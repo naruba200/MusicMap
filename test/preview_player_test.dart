@@ -3,8 +3,9 @@
 // lib/data/fallback/fallback_sources.dart):
 // - on-demand iTunes lookup via AudioPlayerNotifier.resolvePreview,
 //   including the cache (one network call, not one per tap);
-// - playing-state observability: AsyncLoading while resolving, data(null)
-//   when no preview exists, resolvingKey naming the resolving track;
+// - playing-state observability: isResolving while resolving, idle state
+//   when no preview exists, resolvingKey naming the resolving track, and
+//   the no-preview reason recorded in lastError for the SnackBar;
 // - preview-key normalisation consistency between the fallback layer
 //   (which builds the keys) and generation/player lookup (which reads
 //   them via RecommendationEngine.normalizeKey).
@@ -17,7 +18,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:music_man/data/engine/recommendation_engine.dart';
 import 'package:music_man/data/fallback/fallback_sources.dart';
@@ -88,18 +88,21 @@ void main() {
           RecommendationEngine.normalizeKey(track.artist, track.title);
 
       final playFuture = notifier.play(track);
-      // Resolve is in flight: loading state + resolving key observable.
-      expect(notifier.state, isA<AsyncLoading>());
+      // Resolve is in flight: resolving state + resolving key observable.
+      expect(notifier.state.isResolving, isTrue);
       expect(notifier.resolvingKey, key);
       expect(notifier.playingKey, isNull);
 
       gate.complete({'results': []});
       await playFuture;
-      // No preview anywhere: back to stopped, no stale loading state.
-      expect(notifier.state, isA<AsyncData<String?>>());
-      expect(notifier.state.valueOrNull, isNull);
-      expect(notifier.resolvingKey, isNull);
+      // No preview anywhere: back to stopped, no stale resolving state,
+      // and the reason is recorded for the SnackBar.
+      expect(notifier.state.isResolving, isFalse);
+      expect(notifier.state.currentTrack, isNull);
+      expect(notifier.state.resolvingKey, isNull);
       expect(notifier.playingKey, isNull);
+      expect(notifier.state.lastError, 'No preview found for this track');
+      expect(notifier.state.errorSeq, 1);
     });
   });
 
