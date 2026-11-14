@@ -16,8 +16,6 @@
 // presented as tracks — the review UI shows the honest readable/total
 // counts from PlaylistInfo.trackCount.
 
-import 'package:dio/dio.dart';
-
 import '../../core/constants.dart';
 import '../models/music_models.dart';
 import '../spotify/spotify_client.dart';
