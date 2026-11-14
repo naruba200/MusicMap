@@ -34,7 +34,11 @@ class _SpotifyLoginScreenState extends State<SpotifyLoginScreen> {
           onPageFinished: (_) => _captureSpDc(),
         ),
       )
-      ..loadRequest(Uri.parse('https://open.spotify.com'));
+      // Straight to the sign-in page, not the open.spotify.com web app:
+      // the login form is lighter and appears faster. An already-logged-in
+      // user bounces straight through to open.spotify.com, where the
+      // sp_dc capture below still fires on page finish.
+      ..loadRequest(Uri.parse('https://accounts.spotify.com/en/login'));
   }
 
   /// Reads the sp_dc cookie from the WebView's cookie jar. Called on

@@ -44,6 +44,8 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  # Test-only: fake WebView platform for the login-screen test.
+  webview_flutter_platform_interface: ^2.15.1
 
 flutter:
   uses-material-design: true
