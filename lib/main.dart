@@ -17,6 +17,7 @@ import 'presentation/providers/generation_provider.dart';
 import 'presentation/providers/news_provider.dart';
 import 'presentation/providers/providers.dart';
 import 'presentation/screens/screens.dart';
+import 'presentation/widgets/mini_player_bar.dart';
 
 Future<void> main() async {
   await runZonedGuarded(() async {
@@ -144,17 +145,26 @@ class _RootScaffold extends ConsumerWidget {
     );
     return Scaffold(
       body: IndexedStack(index: index, children: _screens),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: index,
-        onDestinationSelected: (i) =>
-            ref.read(tabIndexProvider.notifier).state = i,
-        destinations: [
-          for (final (icon, selectedIcon, label) in _destinations)
-            NavigationDestination(
-              icon: Icon(icon),
-              selectedIcon: Icon(selectedIcon),
-              label: label,
-            ),
+      // The mini-player sits above the nav on every tab. It watches
+      // the player itself, so position ticks rebuild only the bar —
+      // this scaffold stays out of it.
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const MiniPlayerBar(),
+          NavigationBar(
+            selectedIndex: index,
+            onDestinationSelected: (i) =>
+                ref.read(tabIndexProvider.notifier).state = i,
+            destinations: [
+              for (final (icon, selectedIcon, label) in _destinations)
+                NavigationDestination(
+                  icon: Icon(icon),
+                  selectedIcon: Icon(selectedIcon),
+                  label: label,
+                ),
+            ],
+          ),
         ],
       ),
     );

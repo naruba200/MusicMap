@@ -14,65 +14,9 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:music_man/data/fallback/fallback_sources.dart';
 import 'package:music_man/data/models/music_models.dart';
-import 'package:music_man/presentation/providers/audio_backend.dart';
 import 'package:music_man/presentation/providers/generation_provider.dart';
 
-class FakeAudioBackend implements AudioBackend {
-  final stateController = StreamController<PlayerState>.broadcast();
-  final positionController = StreamController<Duration>.broadcast();
-  final durationController = StreamController<Duration>.broadcast();
-  final playedUrls = <String>[];
-  Object? playError;
-  int pauseCalls = 0;
-  int resumeCalls = 0;
-  int stopCalls = 0;
-  Duration? lastSeek;
-
-  @override
-  Stream<PlayerState> get onPlayerStateChanged => stateController.stream;
-  @override
-  Stream<Duration> get onPositionChanged => positionController.stream;
-  @override
-  Stream<Duration> get onDurationChanged => durationController.stream;
-
-  @override
-  Future<void> play(String url) async {
-    if (playError != null) throw playError!;
-    playedUrls.add(url);
-    stateController.add(PlayerState.playing);
-  }
-
-  @override
-  Future<void> pause() async {
-    pauseCalls++;
-    stateController.add(PlayerState.paused);
-  }
-
-  @override
-  Future<void> resume() async {
-    resumeCalls++;
-    stateController.add(PlayerState.playing);
-  }
-
-  @override
-  Future<void> stop() async {
-    stopCalls++;
-    stateController.add(PlayerState.stopped);
-  }
-
-  @override
-  Future<void> seek(Duration position) async {
-    lastSeek = position;
-    positionController.add(position);
-  }
-
-  @override
-  Future<void> dispose() async {
-    await stateController.close();
-    await positionController.close();
-    await durationController.close();
-  }
-}
+import 'fake_audio_backend.dart';
 
 const _trackA = Track(
   artist: 'Singer A',

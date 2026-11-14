@@ -182,5 +182,26 @@ void main() {
       await repo.remove('deezer', '7');
       expect(repo.get('deezer', '7'), isNull);
     });
+
+    test('addTrack appends once and dedupes by normalized key', () async {
+      await repo.save(saved('7'));
+      const track = Track(title: 'New Song', artist: 'New Artist');
+      expect(await repo.addTrack('deezer', '7', track), isTrue);
+      final back = repo.get('deezer', '7');
+      expect(back!.tracks.map((t) => t.title), ['T', 'New Song']);
+      // Same track again (even with a remaster suffix) is refused.
+      expect(
+          await repo.addTrack('deezer', '7',
+              const Track(title: 'new song (remastered)', artist: 'new artist')),
+          isFalse);
+      expect(repo.get('deezer', '7')!.tracks, hasLength(2));
+    });
+
+    test('addTrack returns false for a missing playlist', () async {
+      expect(
+          await repo.addTrack('deezer', 'nope',
+              const Track(title: 'Song', artist: 'Artist')),
+          isFalse);
+    });
   });
 }
