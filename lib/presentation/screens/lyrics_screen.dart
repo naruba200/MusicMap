@@ -12,7 +12,7 @@
 // (plan §0). [client] and [cache] are overridable for tests.
 
 import 'package:dio/dio.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../data/lyrics/lrclib_client.dart';
 import '../../data/lyrics/lyrics_cache.dart';

@@ -1,7 +1,7 @@
 // Heart toggle persisted to the favorites repo (FR-12).
 
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../data/engine/recommendation_engine.dart';
 import '../../data/models/music_models.dart';

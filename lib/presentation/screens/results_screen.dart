@@ -3,8 +3,8 @@
 // via track.getInfo (FR-11); outbound links need no OAuth (v1).
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../core/constants.dart';
 import '../../data/engine/recommendation_engine.dart';

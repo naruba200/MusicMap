@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// App-wide themes (spec NFR-07: full dark theme, follows system by default).
 abstract final class AppTheme {

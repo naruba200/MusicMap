@@ -6,8 +6,8 @@
 // tracked in spec §15; this file keeps a smoke test so the widget harness
 // stays green in the meantime.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:music_man/core/theme.dart';
 import 'package:music_man/core/time_ago.dart';
 

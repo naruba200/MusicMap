@@ -1,8 +1,8 @@
 // History (S-08, FR-13): past runs newest-first; tapping re-opens the
 // cached results without re-fetching.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../../core/time_ago.dart';
 import '../providers/generation_provider.dart';

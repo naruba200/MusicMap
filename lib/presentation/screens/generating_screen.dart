@@ -1,8 +1,8 @@
 // Generating screen (S-04): determinate progress while the Last.fm fan-out
 // runs, cancellable, with retryable error states (FR-10).
 
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../data/models/music_models.dart';
 import '../providers/generation_provider.dart';

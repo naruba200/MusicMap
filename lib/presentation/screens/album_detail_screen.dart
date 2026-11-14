@@ -2,8 +2,8 @@
 // badges on the recommended tracks, per-track hearts and outbound links.
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../data/engine/recommendation_engine.dart';
 import '../widgets/favorite_button.dart';

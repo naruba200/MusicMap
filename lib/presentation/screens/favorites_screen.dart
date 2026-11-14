@@ -2,8 +2,8 @@
 // Songs/Albums, multi-select mode via the selection icon, swipe-to-remove.
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../data/engine/recommendation_engine.dart';
 import '../../data/models/music_models.dart';

@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Material widgets (decoupled from the framework in Flutter 3.47)
+  material_ui: ^1.11.0
   # State management (spec §8)
   flutter_riverpod: ^2.5.1
   # HTTP (spec §8)

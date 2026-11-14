@@ -2,8 +2,8 @@
 // count presets, discovery modifier chips, Fresh finds toggle, Rescan,
 // and the "Get recommendations" CTA (M2 engine).
 
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../core/constants.dart';
 import '../../core/time_ago.dart';

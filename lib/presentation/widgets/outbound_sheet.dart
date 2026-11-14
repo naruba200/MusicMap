@@ -1,7 +1,7 @@
 // Per-track and per-album outbound links (no OAuth needed anywhere in v1):
 // each platform is reached via its search URL.
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../data/models/music_models.dart';
 import '../../data/platforms/open_in_app.dart';

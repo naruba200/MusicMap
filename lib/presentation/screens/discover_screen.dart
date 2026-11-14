@@ -3,8 +3,8 @@
 // nothing here is merged into the main Last.fm recommendation pool.
 
 import 'package:audioplayers/audioplayers.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../core/constants.dart';
 import '../../data/discover/audius_client.dart';
