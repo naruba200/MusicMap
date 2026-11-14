@@ -1350,6 +1350,10 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
 
   bool get isPlaying => state.isPlaying;
 
+  /// Current player state, for the media notification handler (which
+  /// has no Riverpod ref to watch the provider through).
+  PlaybackState get currentState => state;
+
   /// Normalized key of the currently playing track, null otherwise.
   String? get playingKey => state.isPlaying ? state.currentKey : null;
 
