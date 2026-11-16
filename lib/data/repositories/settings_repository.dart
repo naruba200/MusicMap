@@ -38,6 +38,18 @@ class SettingsRepository {
     return trimmed.isEmpty ? null : trimmed;
   }
 
+  /// Appearance (Phase A redesign): the named theme and the design
+  /// variant, stored as their enum names. Validation lives with the
+  /// enums (unknown stored values fall back to the defaults), so the
+  /// raw strings are returned as-is here.
+  String get themeName =>
+      _box.get('theme', defaultValue: 'editorial') as String;
+  Future<void> setThemeName(String name) => _box.put('theme', name);
+
+  String get design =>
+      _box.get('design', defaultValue: 'compact') as String;
+  Future<void> setDesign(String name) => _box.put('design', name);
+
   /// Save a username, or clear it (null / blank deletes the key).
   Future<void> setListenBrainzUsername(String? username) {
     final trimmed = username?.trim() ?? '';

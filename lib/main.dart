@@ -15,6 +15,7 @@ import 'data/repositories/favorites_repository.dart';
 import 'data/repositories/history_repository.dart';
 import 'data/repositories/playlist_repository.dart';
 import 'data/repositories/settings_repository.dart';
+import 'presentation/providers/appearance_provider.dart';
 import 'presentation/providers/generation_provider.dart';
 import 'presentation/providers/media_notification_handler.dart';
 import 'presentation/providers/news_provider.dart';
@@ -131,11 +132,20 @@ class MusicManApp extends ConsumerWidget {
           ref.read(settingsRepositoryProvider).selectedPlatformId;
     });
 
+    final appearance = ref.watch(appearanceProvider);
+    final themeData = AppTheme.themeData(
+      appearance.effectiveTheme,
+      appearance.design,
+    );
+
     return MaterialApp(
       title: 'Music Man',
-      theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
-      themeMode: ThemeMode.system,
+      // Theme and darkTheme are the same selected ThemeData, so the
+      // chosen theme always wins over the system brightness: the six
+      // named themes each carry their own brightness (Editorial is
+      // light, Tako and Midnight are dark).
+      theme: themeData,
+      darkTheme: themeData,
       navigatorKey: navigatorKey,
       home: const _RootScaffold(),
     );

@@ -8,14 +8,17 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:music_man/core/appearance.dart';
 import 'package:music_man/core/theme.dart';
 import 'package:music_man/core/time_ago.dart';
 
 void main() {
-  testWidgets('app dark theme builds and timeAgo renders', (tester) async {
+  testWidgets('app midnight theme builds and timeAgo renders',
+      (tester) async {
     await tester.pumpWidget(
       MaterialApp(
-        theme: AppTheme.dark,
+        theme: AppTheme.themeData(
+            AppThemeName.midnight, AppDesign.compact),
         home: Scaffold(body: Text(timeAgo(DateTime.now()))),
       ),
     );

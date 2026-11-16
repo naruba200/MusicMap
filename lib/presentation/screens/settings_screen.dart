@@ -14,6 +14,7 @@ import '../../core/constants.dart';
 import '../../data/news/news_source.dart';
 import '../providers/news_provider.dart';
 import '../providers/providers.dart';
+import '../widgets/appearance_section.dart';
 import 'playback_log_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -37,6 +38,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
+          _sectionHeader('Appearance'),
+          const AppearanceSection(),
+          const Divider(),
           _sectionHeader('Accounts'),
           for (final p in registry.platforms)
             ListTile(
@@ -279,6 +283,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           'albumCount': ref.read(settingsRepositoryProvider).albumCount,
           'listenBrainzUsername':
               ref.read(settingsRepositoryProvider).listenBrainzUsername,
+          'theme': ref.read(settingsRepositoryProvider).themeName,
+          'design': ref.read(settingsRepositoryProvider).design,
         },
       };
       final dir = await getTemporaryDirectory();

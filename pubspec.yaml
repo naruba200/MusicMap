@@ -44,6 +44,7 @@ dependencies:
   # on pub.dev (verified 2026-11-14), needs SDK ^3.6.0 / Flutter
   # >=3.27.0 — both satisfied (Flutter 3.50 / Dart 3.13).
   audio_service: ^0.18.19
+  google_fonts: ^9.0.0
 
 dev_dependencies:
   flutter_test:
