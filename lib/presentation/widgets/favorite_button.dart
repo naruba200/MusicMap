@@ -23,7 +23,9 @@ class _FavoriteButtonState extends ConsumerState<FavoriteButton> {
     final isFav = repo.isFavorite(widget.track.artist, widget.track.title);
     return IconButton(
       icon: Icon(isFav ? Icons.favorite : Icons.favorite_outline,
-          color: isFav ? Colors.pinkAccent : null),
+          // One accent per theme (DESIGN.md): the heart fills in the
+          // theme accent, never a second color.
+          color: isFav ? Theme.of(context).colorScheme.primary : null),
       tooltip: isFav ? 'Remove from favorites' : 'Add to favorites',
       onPressed: () {
         final nowFav = repo.toggle(widget.track);
@@ -58,7 +60,9 @@ class _FavoriteAlbumButtonState extends ConsumerState<FavoriteAlbumButton> {
         repo.isAlbumFavorite(widget.album.artist, widget.album.name);
     return IconButton(
       icon: Icon(isFav ? Icons.favorite : Icons.favorite_outline,
-          color: isFav ? Colors.pinkAccent : null),
+          // One accent per theme (DESIGN.md): the heart fills in the
+          // theme accent, never a second color.
+          color: isFav ? Theme.of(context).colorScheme.primary : null),
       tooltip: isFav ? 'Remove from favorites' : 'Add to favorites',
       onPressed: () {
         final nowFav = repo.toggleAlbum(widget.album);
