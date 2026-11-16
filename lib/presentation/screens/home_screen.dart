@@ -1,15 +1,25 @@
-// Home screen (S-02): platform dropdown, Surprise me, playlist picker,
-// paste-a-link, imported playlists, how-it-works.
+// Home screen (S-02): the cover.
+//
+// DESIGN.md: masthead with the 音 stamp, Surprise me as the lead
+// story, mood and genre chips as a column, platform dropdown, your
+// playlists, paste a link, imported playlists as a contents list,
+// how it works as a footnote. Complex adds a second editorial block
+// and a "This week" strip built from the real imported library.
+// Restyle only: every behavior below (chips, dropdown, sign in,
+// navigation, generation entry points) is unchanged.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/appearance.dart';
 import '../../core/constants.dart';
 import '../../core/time_ago.dart';
 import '../../data/models/music_models.dart';
 import '../../data/platforms/music_platform.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
+import '../widgets/editorial_route.dart';
+import '../widgets/editorial_widgets.dart';
 import 'generating_screen.dart';
 import 'playlist_detail_screen.dart';
 
@@ -22,12 +32,14 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   final _linkController = TextEditingController();
+  final _linkFocusNode = FocusNode();
   final _surpriseMoods = <String>{};
   final _surpriseGenres = <String>{};
 
   @override
   void dispose() {
     _linkController.dispose();
+    _linkFocusNode.dispose();
     super.dispose();
   }
 
@@ -78,10 +90,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     _linkController.clear();
     if (!mounted) return;
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => PlaylistDetailScreen(
+      editorialRoute(
+        context,
+        (_) => PlaylistDetailScreen(
           platformId: parsed.ref.platformId,
           playlistId: parsed.ref.playlistId,
+        ),
+      ),
+    );
+  }
+
+  void _surpriseMe() {
+    final settingsRepo = ref.read(settingsRepositoryProvider);
+    ref.read(generationProvider.notifier).reset();
+    Navigator.of(context).push(
+      editorialRoute(
+        context,
+        (_) => GeneratingScreen(
+          args: GenerationArgs(
+            surprise: true,
+            seedName: 'Surprise picks',
+            tracks: const [],
+            settings: DiscoverySettings(
+              songCount: settingsRepo.songCount,
+              albumCount: settingsRepo.albumCount,
+              moods: Set.of(_surpriseMoods),
+              genres: Set.of(_surpriseGenres),
+            ),
+          ),
         ),
       ),
     );
@@ -95,66 +131,140 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final authState = ref.watch(authStateProvider);
     final signedIn = authState[platformId] ?? false;
     final saved = ref.watch(savedPlaylistsProvider);
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final tokens = theme.extension<MusicManDesignTokens>();
+    final isComplex = tokens?.design == AppDesign.complex;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Music Man')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
         children: [
-          // Surprise me (M2 engine, no seed playlist — FR-19).
-          FilledButton.icon(
-            onPressed: () {
-              final settingsRepo = ref.read(settingsRepositoryProvider);
-              ref.read(generationProvider.notifier).reset();
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => GeneratingScreen(
-                    args: GenerationArgs(
-                      surprise: true,
-                      seedName: 'Surprise picks',
-                      tracks: const [],
-                      settings: DiscoverySettings(
-                        songCount: settingsRepo.songCount,
-                        albumCount: settingsRepo.albumCount,
-                        moods: Set.of(_surpriseMoods),
-                        genres: Set.of(_surpriseGenres),
+          // Masthead: the 音 stamp and the name, like a magazine cover.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const StampSquare(kanji: '音', size: 44),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Music Man',
+                        style: theme.textTheme.displayMedium),
+                    const SizedBox(height: 2),
+                    Text(
+                      'A playlist you love, turned into the next songs you should hear.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
                       ),
                     ),
-                  ),
+                  ],
                 ),
-              );
-            },
-            icon: const Icon(Icons.shuffle),
-            label: const Text('Surprise me'),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            children: [
-              for (final mood in moodChips.take(7))
-                FilterChip(
-                  label: Text(mood),
-                  selected: _surpriseMoods.contains(mood),
-                  onSelected: (v) => setState(() {
-                    v ? _surpriseMoods.add(mood) : _surpriseMoods.remove(mood);
-                  }),
-                ),
-              for (final genre in ['J-Pop', 'Rock', 'Electronic'])
-                FilterChip(
-                  label: Text(genre),
-                  selected: _surpriseGenres.contains(genre),
-                  onSelected: (v) => setState(() {
-                    v
-                        ? _surpriseGenres.add(genre)
-                        : _surpriseGenres.remove(genre);
-                  }),
-                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
+          const Divider(height: 1),
+          const SizedBox(height: 24),
+
+          // Surprise me, the lead story.
+          _LeadPanel(
+            isComplex: isComplex,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Not sure where to start?',
+                  style: theme.textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Pick a mood or a genre below, and let Music Man choose the first songs.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _surpriseMe,
+                  icon: const Icon(Icons.shuffle),
+                  label: const Text('Surprise me'),
+                ),
+                const SizedBox(height: 20),
+                // Mood and genre chips as a column, not one flat row.
+                Text('Mood', style: theme.textTheme.titleSmall),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final mood in moodChips.take(7))
+                      FilterChip(
+                        label: Text(mood),
+                        selected: _surpriseMoods.contains(mood),
+                        onSelected: (v) => setState(() {
+                          v
+                              ? _surpriseMoods.add(mood)
+                              : _surpriseMoods.remove(mood);
+                        }),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text('Genre', style: theme.textTheme.titleSmall),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final genre in ['J-Pop', 'Rock', 'Electronic'])
+                      FilterChip(
+                        label: Text(genre),
+                        selected: _surpriseGenres.contains(genre),
+                        onSelected: (v) => setState(() {
+                          v
+                              ? _surpriseGenres.add(genre)
+                              : _surpriseGenres.remove(genre);
+                        }),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // Complex only: a second editorial block and a "This week"
+          // strip, both built from the real imported library.
+          if (isComplex) ...[
+            const SizedBox(height: 24),
+            _LeadPanel(
+              isComplex: true,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Start from a playlist you already love.',
+                    style: theme.textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'The picks follow your taste, not the charts. Import one playlist and Music Man does the rest.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            _ThisWeekStrip(saved: saved),
+          ],
+          const SizedBox(height: 32),
 
           // Platform picker.
+          Text('Platform', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
           DropdownButtonFormField<String>(
             initialValue: platformId,
             decoration: const InputDecoration(
@@ -174,13 +284,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(4),
-                            color: Theme.of(context)
-                                .colorScheme
-                                .secondaryContainer,
+                            borderRadius: BorderRadius.circular(2),
+                            color: scheme.surface,
                           ),
-                          child: Text('β',
-                              style: Theme.of(context).textTheme.labelSmall),
+                          child: Text('Beta',
+                              style: theme.textTheme.labelSmall),
                         ),
                     ],
                   ),
@@ -222,18 +330,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     icon: const Icon(Icons.login),
                     label: Text('Connect ${platform.displayName}'),
                   ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 24),
 
           // Playlist picker.
-          Text('Your playlists', style: Theme.of(context).textTheme.titleSmall),
+          Text('Your playlists', style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
           _PlaylistPicker(
             platform: platform,
             signedIn: signedIn,
             onPick: (info) {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => PlaylistDetailScreen(
+                editorialRoute(
+                  context,
+                  (_) => PlaylistDetailScreen(
                     platformId: info.platformId,
                     playlistId: info.id,
                   ),
@@ -241,17 +350,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               );
             },
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
 
           // Paste a link.
-          Text('…or paste a playlist link',
-              style: Theme.of(context).textTheme.titleSmall),
+          Text('Paste a playlist link',
+              style: theme.textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            'Or paste a link instead of browsing your library.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
           const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
                 child: TextField(
                   controller: _linkController,
+                  focusNode: _linkFocusNode,
                   decoration: InputDecoration(
                     hintText: platform.id == PlatformIds.youTubeMusic
                         ? 'https://music.youtube.com/playlist?list=…'
@@ -271,65 +388,224 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 32),
 
-          // Imported playlists.
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Imported playlists',
-                  style: Theme.of(context).textTheme.titleSmall),
-              Text('${saved.length}',
-                  style: Theme.of(context).textTheme.labelMedium),
-            ],
+          // Imported playlists as a contents list.
+          SectionHeader(
+            kanji: '音',
+            title: 'Imported playlists',
+            trailing: Text(
+              '${saved.length}',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
           ),
           const SizedBox(height: 8),
           if (saved.isEmpty)
-            Text(
-              'Nothing imported yet — pick a playlist above or paste a link.',
-              style: Theme.of(context).textTheme.bodySmall,
+            EditorialEmptyState(
+              message:
+                  'Nothing imported yet. Pick a playlist above or paste a link below.',
+              actionLabel: 'Paste a link',
+              onAction: () => _linkFocusNode.requestFocus(),
             )
           else
-            for (final s in saved)
-              Card(
-                child: ListTile(
-                  leading: s.info.coverUrl != null
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: Image.network(s.info.coverUrl!,
-                              width: 48, height: 48, fit: BoxFit.cover),
-                        )
-                      : const Icon(Icons.queue_music, size: 40),
-                  title: Text(s.info.name,
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(
-                      '${registry.byId(s.info.platformId).displayName} · '
-                      '${s.tracks.length} tracks · scanned ${timeAgo(s.lastScannedAt)}'),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () => _confirmDelete(
-                        s.info.platformId, s.info.id, s.info.name),
-                  ),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => PlaylistDetailScreen(
-                          platformId: s.info.platformId,
-                          playlistId: s.info.id,
-                        ),
+            for (var i = 0; i < saved.length; i++)
+              _ContentsRow(
+                index: i + 1,
+                saved: saved[i],
+                platformName:
+                    registry.byId(saved[i].info.platformId).displayName,
+                onTap: () {
+                  Navigator.of(context).push(
+                    editorialRoute(
+                      context,
+                      (_) => PlaylistDetailScreen(
+                        platformId: saved[i].info.platformId,
+                        playlistId: saved[i].info.id,
                       ),
-                    );
-                  },
-                ),
+                    ),
+                  );
+                },
+                onDelete: () => _confirmDelete(saved[i].info.platformId,
+                    saved[i].info.id, saved[i].info.name),
               ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 32),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
           Text(
             'How it works: import a playlist, tune the discovery filters, and '
-            'Music Man finds similar songs and albums via Last.fm — no account, '
-            'everything stays on your device.',
-            style: Theme.of(context).textTheme.bodySmall,
+            'Music Man finds similar songs and albums via Last.fm. No account '
+            'needed. Everything stays on your device.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A paper 2 panel for the lead story and the second editorial block.
+/// In Complex it sits raised above the page; in Compact it stays
+/// flat behind a hairline border (DESIGN.md: one-shadow rule).
+class _LeadPanel extends StatelessWidget {
+  final bool isComplex;
+  final Widget child;
+
+  const _LeadPanel({required this.isComplex, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<MusicManDesignTokens>();
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border.all(color: theme.colorScheme.outline),
+        borderRadius: BorderRadius.circular(tokens?.cardRadius ?? 4),
+        boxShadow:
+            isComplex ? (tokens?.raisedShadow ?? const []) : const [],
+      ),
+      child: child,
+    );
+  }
+}
+
+/// The Complex "This week" strip: real counts from the imported
+/// library only, never invented numbers.
+class _ThisWeekStrip extends StatelessWidget {
+  final List<SavedPlaylist> saved;
+
+  const _ThisWeekStrip({required this.saved});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final totalTracks =
+        saved.fold<int>(0, (sum, s) => sum + s.tracks.length);
+    final latest = saved.isEmpty
+        ? null
+        : saved.reduce(
+            (a, b) => a.lastScannedAt.isAfter(b.lastScannedAt) ? a : b);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('This week', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Text(
+          saved.isEmpty
+              ? 'Nothing imported yet this week.'
+              : '${saved.length} imported playlists, $totalTracks tracks in your library.'
+                  ' Last scanned: ${latest!.info.name}, ${timeAgo(latest.lastScannedAt)}.',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Divider(height: 1),
+      ],
+    );
+  }
+}
+
+/// One row of the imported-playlists contents list: number, cover,
+/// name, platform and track count, delete. A ruled list, not cards.
+class _ContentsRow extends StatelessWidget {
+  final int index;
+  final SavedPlaylist saved;
+  final String platformName;
+  final VoidCallback onTap;
+  final VoidCallback onDelete;
+
+  const _ContentsRow({
+    required this.index,
+    required this.saved,
+    required this.platformName,
+    required this.onTap,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: scheme.outline),
+          ),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 28,
+              child: Text(
+                index.toString().padLeft(2, '0'),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            saved.info.coverUrl != null
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: Image.network(
+                      saved.info.coverUrl!,
+                      width: 48,
+                      height: 48,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, _, __) => Container(
+                        width: 48,
+                        height: 48,
+                        color: scheme.surface,
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.queue_music),
+                      ),
+                    ),
+                  )
+                : Container(
+                    width: 48,
+                    height: 48,
+                    color: scheme.surface,
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.queue_music),
+                  ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    saved.info.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall,
+                  ),
+                  Text(
+                    '$platformName · ${saved.tracks.length} tracks · scanned ${timeAgo(saved.lastScannedAt)}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Delete ${saved.info.name}',
+              onPressed: onDelete,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -351,16 +627,14 @@ class _PlaylistPicker extends ConsumerWidget {
     if (platform.requiresAuthForLibrary && !signedIn) {
       return Text(
         platform.linkNeedsAuth
-            ? 'Connect ${platform.displayName} to browse your playlists — '
-                'pasted links need your ${platform.displayName} session too.'
-            : 'Connect ${platform.displayName} to browse your playlists, '
-                'or paste a link below — no sign-in needed.',
+            ? 'Connect ${platform.displayName} to browse your playlists. Pasted links need your ${platform.displayName} session too.'
+            : 'Connect ${platform.displayName} to browse your playlists, or paste a link below. No sign-in needed.',
         style: Theme.of(context).textTheme.bodySmall,
       );
     }
     if (!platform.requiresAuthForLibrary) {
       return Text(
-        '${platform.displayName} has no sign-in here — paste a public '
+        '${platform.displayName} has no sign-in here. Paste a public '
         'playlist link below.',
         style: Theme.of(context).textTheme.bodySmall,
       );
@@ -371,7 +645,7 @@ class _PlaylistPicker extends ConsumerWidget {
         if (list.isEmpty) {
           return Text(
             platform.id == PlatformIds.spotify
-                ? 'Spotify imports work from pasted links — paste one below.'
+                ? 'Spotify imports work from pasted links. Paste one below.'
                 : 'No playlists found.',
             style: Theme.of(context).textTheme.bodySmall,
           );
@@ -386,23 +660,21 @@ class _PlaylistPicker extends ConsumerWidget {
               final p = list[i];
               return InkWell(
                 onTap: () => onPick(p),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(4),
                 child: SizedBox(
                   width: 104,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(2),
                         child: p.coverUrl != null
                             ? Image.network(p.coverUrl!,
                                 width: 104, height: 88, fit: BoxFit.cover)
                             : Container(
                                 width: 104,
                                 height: 88,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .surfaceContainerHighest,
+                                color: Theme.of(context).colorScheme.surface,
                                 child: const Icon(Icons.queue_music),
                               ),
                       ),
@@ -421,16 +693,14 @@ class _PlaylistPicker extends ConsumerWidget {
           ),
         );
       },
-      loading: () => const Center(
-          child: Padding(
-              padding: EdgeInsets.all(16),
-              child: CircularProgressIndicator())),
-      error: (e, _) => Text(
-        e is PlatformException ? e.message : 'Could not load playlists.',
-        style: Theme.of(context)
-            .textTheme
-            .bodySmall
-            ?.copyWith(color: Theme.of(context).colorScheme.error),
+      loading: () => const EditorialLoadingState(
+        message: 'Loading your playlists',
+      ),
+      error: (e, _) => EditorialErrorState(
+        message: e is PlatformException
+            ? e.message
+            : 'Could not load playlists. Check your connection and retry.',
+        onRetry: () => ref.invalidate(userPlaylistsProvider),
       ),
     );
   }

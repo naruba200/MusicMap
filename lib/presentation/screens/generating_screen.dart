@@ -1,11 +1,18 @@
-// Generating screen (S-04): determinate progress while the Last.fm fan-out
-// runs, cancellable, with retryable error states (FR-10).
+// Generating screen (S-04): determinate progress while the Last.fm
+// fan-out runs, cancellable, with retryable error states (FR-10).
+//
+// DESIGN.md: determinate progress ("Analyzing track N of 20"), a thin
+// vermillion progress rule, Cancel. Error state with Retry, never a
+// blank screen. Unchanged between designs except the editorial voice,
+// so the behavior here is identical to before.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/appearance.dart';
 import '../../data/models/music_models.dart';
 import '../providers/generation_provider.dart';
+import '../widgets/editorial_route.dart';
 import 'results_screen.dart';
 
 class GenerationArgs {
@@ -70,13 +77,19 @@ class _GeneratingScreenState extends ConsumerState<GeneratingScreen> {
     }
   }
 
+  void _cancelAndClose() {
+    ref.read(generationProvider.notifier).cancel();
+    Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<GenerationState>(generationProvider, (prev, next) {
       if (next.result != null && mounted) {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => ResultsScreen(
+          editorialRoute(
+            context,
+            (_) => ResultsScreen(
               result: next.result!,
               liveEnrichment: true,
             ),
@@ -93,10 +106,8 @@ class _GeneratingScreenState extends ConsumerState<GeneratingScreen> {
         title: Text(widget.args.surprise ? 'Surprise me' : 'Generating'),
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () {
-            ref.read(generationProvider.notifier).cancel();
-            Navigator.of(context).pop();
-          },
+          tooltip: 'Cancel',
+          onPressed: _cancelAndClose,
         ),
       ),
       body: Padding(
@@ -110,17 +121,21 @@ class _GeneratingScreenState extends ConsumerState<GeneratingScreen> {
     if (state.error != null) {
       return Column(
         mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(Icons.cloud_off_outlined,
-              size: 56, color: theme.colorScheme.error),
-          const SizedBox(height: 16),
-          Text('Could not generate recommendations',
-              style: theme.textTheme.titleMedium,
-              textAlign: TextAlign.center),
+          Text(
+            'Could not generate recommendations',
+            style: theme.textTheme.headlineSmall,
+            textAlign: TextAlign.center,
+          ),
           const SizedBox(height: 8),
-          Text(state.error!,
-              style: theme.textTheme.bodyMedium,
-              textAlign: TextAlign.center),
+          Text(
+            state.error!,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
           const SizedBox(height: 24),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -142,39 +157,70 @@ class _GeneratingScreenState extends ConsumerState<GeneratingScreen> {
     }
 
     final progress = state.progress;
+    final tokens = theme.extension<MusicManDesignTokens>();
+    final isComplex = tokens?.design == AppDesign.complex;
+    final fraction = progress != null && progress.total > 0
+        ? progress.fraction
+        : null;
+
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(
-          width: 56,
-          height: 56,
-          child: CircularProgressIndicator(strokeWidth: 5),
-        ),
-        const SizedBox(height: 24),
         Text(
-          progress != null
-              ? '${progress.phase} (${progress.done}/${progress.total})'
-              : 'Warming up…',
-          style: theme.textTheme.titleSmall,
+          widget.args.surprise ? 'Surprise picks' : widget.args.seedName,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 12),
-        if (progress != null && progress.total > 0)
-          LinearProgressIndicator(value: progress.fraction),
+        const SizedBox(height: 8),
+        Text(
+          progress != null ? progress.phase : 'Warming up',
+          style: theme.textTheme.headlineSmall,
+          textAlign: TextAlign.center,
+        ),
+        if (progress != null && progress.total > 0) ...[
+          const SizedBox(height: 8),
+          Text(
+            '${progress.done} of ${progress.total}',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+        const SizedBox(height: 24),
+        // The thin vermillion progress rule. In Complex it eases to
+        // each new value; in Compact it jumps instantly (MOTION 0).
+        if (isComplex && fraction != null)
+          TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0, end: fraction),
+            duration: tokens?.progressTick ?? Duration.zero,
+            builder: (context, value, _) => LinearProgressIndicator(
+              value: value,
+              minHeight: 2,
+            ),
+          )
+        else
+          LinearProgressIndicator(
+            value: fraction,
+            minHeight: 2,
+          ),
         const SizedBox(height: 24),
         Text(
-          'Scoring candidates against your seeds…',
-          style: theme.textTheme.bodySmall
-              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          'Scoring candidates against your seeds.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 24),
-        OutlinedButton(
-          onPressed: () {
-            ref.read(generationProvider.notifier).cancel();
-            Navigator.of(context).pop();
-          },
-          child: const Text('Cancel'),
+        Center(
+          child: OutlinedButton(
+            onPressed: _cancelAndClose,
+            child: const Text('Cancel'),
+          ),
         ),
       ],
     );
