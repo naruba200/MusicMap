@@ -752,7 +752,7 @@ class _JamendoRadiosView extends ConsumerWidget {
                         return;
                       }
                       await player.playStream(radioTrack, stream,
-                          source: 'full');
+                          source: 'full', live: true);
                     },
                   ),
                 ),
