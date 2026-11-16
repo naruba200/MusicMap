@@ -47,6 +47,10 @@ class FakeSpotifyAdapter implements HttpClientAdapter {
   /// Body of the last client-token call (device_id check).
   Map<String, dynamic>? lastClientTokenBody;
 
+  /// Decoded JSON body of the last api-partner call (operation + hash
+  /// checks for the search tests).
+  Map<String, dynamic>? lastGraphQlRequest;
+
   @override
   Future<ResponseBody> fetch(
     RequestOptions options,
@@ -101,6 +105,7 @@ class FakeSpotifyAdapter implements HttpClientAdapter {
     } else if (host == 'api-partner.spotify.com') {
       status = graphQlStatus;
       if (status == 200) {
+        lastGraphQlRequest = _requestJson(options);
         payload = _graphQlPayload(_requestJson(options));
       } else {
         payload = {
@@ -127,6 +132,52 @@ class FakeSpotifyAdapter implements HttpClientAdapter {
 
   Map<String, dynamic> _graphQlPayload(Map<String, dynamic> request) {
     final operation = request['operationName'] as String?;
+    if (operation == 'searchTracks') {
+      // Verified shape (Spotube plugin search_200.json): items nest
+      // the track under `item`, NOT the playlist's `itemV2` key.
+      return {
+        'data': {
+          'searchV2': {
+            'tracksV2': {
+              'items': [
+                {
+                  'item': {
+                    'data': {
+                      '__typename': 'Track',
+                      'name': 'Song',
+                      'artists': {
+                        'items': [
+                          {'profile': {'name': 'Singer'}},
+                        ],
+                      },
+                      'albumOfTrack': {
+                        'name': 'Album',
+                        'coverArt': {
+                          'sources': [
+                            {
+                              'url': 'https://cover.test/s.jpg',
+                              'width': 300
+                            },
+                          ],
+                        },
+                      },
+                      'trackDuration': {'totalMilliseconds': 210000},
+                      'uri': 'spotify:track:xyz',
+                      'id': 'xyz',
+                    },
+                  },
+                },
+                {
+                  'item': {
+                    'data': {'__typename': 'RestrictedContent'},
+                  },
+                },
+              ],
+            },
+          },
+        },
+      };
+    }
     if (operation == 'fetchPlaylistWithGatedEntityRelations') {
       return {
         'data': {
@@ -458,6 +509,47 @@ void main() {
         'Ascension to Heaven',
         'Sound Chimera',
       ]);
+    });
+
+    test('searchTracks parses the searchV2 fixture (item, not itemV2)',
+        () async {
+      await seedSignedIn();
+      final tracks = await client.searchTracks('Singer Song');
+      // The RestrictedContent item is skipped, never presented.
+      expect(tracks.length, 1);
+      final track = tracks.first;
+      expect(track.title, 'Song');
+      expect(track.artist, 'Singer');
+      expect(track.album, 'Album');
+      expect(track.imageUrl, 'https://cover.test/s.jpg');
+      expect(track.durationMs, 210000);
+      expect(track.platformTrackId, 'spotify:track:xyz');
+      // The verified contract: searchTracks operation, its own
+      // persisted-query hash (NOT the playlist hash), and the
+      // searchTerm variable.
+      final request = adapter.lastGraphQlRequest!;
+      expect(request['operationName'], 'searchTracks');
+      expect(
+        ((request['extensions'] as Map?)?['persistedQuery'] as Map?)?['sha256Hash'],
+        'bc1ca2fcd0ba1013a0fc88e6cc4f190af501851e3dafd3e1ef85840297694428',
+      );
+      expect(
+        (request['variables'] as Map?)?['searchTerm'], 'Singer Song');
+      expect((request['variables'] as Map?)?['limit'], 20);
+    });
+
+    test('searchTracks 401 clears the session and throws authExpired',
+        () async {
+      await seedSignedIn();
+      adapter.graphQlStatus = 401;
+      await expectLater(
+        client.searchTracks('Singer Song'),
+        throwsA(
+          isA<PlatformException>()
+              .having((e) => e.authExpired, 'authExpired', isTrue),
+        ),
+      );
+      expect(await store.read(SpotifySession.spDcKey), isNull);
     });
 
     test('GraphQL 401 clears the session and throws authExpired', () async {

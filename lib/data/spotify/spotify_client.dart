@@ -98,6 +98,13 @@ class SpotifyInternalClient {
   static const String _persistedQueryHash =
       '19ff1327c29e99c208c86d7a9d8f1929cfdf3d3202a0ff4253c821f1901aa94d';
 
+  /// The track-search operation needs a DIFFERENT persisted-query hash
+  /// (read live 2026-11-15 from sonic-liberation/spotube-plugin-spotify
+  /// SearchClient.kt — never guessed). It is passed to [_graphQl]
+  /// explicitly; the playlist hash above stays the default.
+  static const String _searchPersistedQueryHash =
+      'bc1ca2fcd0ba1013a0fc88e6cc4f190af501851e3dafd3e1ef85840297694428';
+
   static const String _nuanceUrl =
       'https://gist.githubusercontent.com/raw/22ed9c6ba463899e933427f7de1f0eef/nuances.json';
 
@@ -427,15 +434,60 @@ class SpotifyInternalClient {
     );
   }
 
+  // -- Track search (metadata only) -----------------------------------------
+
+  /// Search Spotify for tracks by free text, using the verified
+  /// `searchTracks` persisted query. This is METADATA only: Spotify's
+  /// web streams are Widevine-DRM and cannot play in-app, so the
+  /// caller uses the returned canonical title/artist to re-resolve
+  /// the track through Audius / YouTube Music instead. Returns the
+  /// matching tracks in Spotify's order (best first); an empty list
+  /// when nothing matches. A rejected session throws PlatformException
+  /// with authExpired, per the existing client contract — the caller
+  /// logs it and continues without Spotify, never failing the whole
+  /// resolve.
+  Future<List<Track>> searchTracks(String query, {int limit = 20}) async {
+    final data = await _graphQl(
+      'searchTracks',
+      {
+        'searchTerm': query,
+        'offset': 0,
+        'limit': limit,
+        'includePreReleases': false,
+        'numberOfTopResults': limit,
+        'includeAudiobooks': true,
+        'includeAuthors': false,
+      },
+      persistedQueryHash: _searchPersistedQueryHash,
+    );
+    final searchV2 = (data['data'] as Map?)?['searchV2'] as Map?;
+    final tracksV2 = searchV2?['tracksV2'] as Map?;
+    final items = tracksV2?['items'] as List?;
+    if (items == null) return const [];
+    final tracks = <Track>[];
+    for (final item in items) {
+      // NOTE: search items nest the track under `item`, NOT the
+      // playlist's `itemV2` key.
+      final itemData = ((item as Map?)?['item'] as Map?)?['data'] as Map?;
+      if (itemData == null || itemData['__typename'] != 'Track') continue;
+      final track = _trackFromJson(itemData);
+      if (track != null) tracks.add(track);
+    }
+    return tracks;
+  }
+
   // -- GraphQL -------------------------------------------------------------
 
   /// One persisted-query call with Echo's exact web-player headers.
   /// A 401/403 means the session is rejected: clear it and ask the
-  /// user to sign in again (never retry silently).
+  /// user to sign in again (never retry silently). [persistedQueryHash]
+  /// overrides the default playlist hash for operations (like search)
+  /// that need their own.
   Future<Map<String, dynamic>> _graphQl(
     String operation,
-    Map<String, dynamic> variables,
-  ) async {
+    Map<String, dynamic> variables, {
+    String? persistedQueryHash,
+  }) async {
     final token = await accessToken();
     final ct = await clientToken();
     try {
@@ -447,7 +499,7 @@ class SpotifyInternalClient {
           'extensions': {
             'persistedQuery': {
               'version': 1,
-              'sha256Hash': _persistedQueryHash,
+              'sha256Hash': persistedQueryHash ?? _persistedQueryHash,
             },
           },
         },
