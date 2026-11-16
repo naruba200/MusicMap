@@ -30,12 +30,12 @@ import 'fake_audio_backend.dart';
 const _trackA = Track(
   artist: 'Singer A',
   title: 'Song A',
-  previewUrl: 'https://example.com/a.m4a',
+  streamUrl: 'https://example.com/a.m4a',
 );
 const _trackB = Track(
   artist: 'Singer B',
   title: 'Song B',
-  previewUrl: 'https://example.com/b.m4a',
+  streamUrl: 'https://example.com/b.m4a',
 );
 
 void main() {

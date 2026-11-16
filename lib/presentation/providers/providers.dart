@@ -11,6 +11,8 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import '../../core/constants.dart';
 import '../../data/auth/token_store.dart';
 import '../../data/engine/recommendation_engine.dart';
+import '../../data/fallback/fallback_sources.dart';
+import '../../data/fullsong/resolution_log.dart';
 import '../../data/models/music_models.dart';
 import '../../data/network/retry_interceptor.dart';
 import '../../data/platforms/music_platform.dart';
@@ -20,7 +22,6 @@ import '../../data/repositories/favorites_repository.dart';
 import '../../data/repositories/history_repository.dart';
 import '../../data/repositories/playlist_repository.dart';
 import '../../data/repositories/settings_repository.dart';
-import '../../data/fallback/fallback_sources.dart';
 import '../screens/playlist_detail_screen.dart';
 import '../screens/spotify_login_screen.dart';
 
@@ -84,6 +85,13 @@ final favoritesRepositoryProvider =
 /// Overridden in main() after Hive opens.
 final historyRepositoryProvider =
     Provider<HistoryRepository>((ref) => throw UnimplementedError());
+
+/// Full-song resolution log (last ~100 attempts, in-memory): the
+/// "Playback log" screen watches this; the player records into it via
+/// the resolver (see audioPlayerProvider in generation_provider.dart).
+final resolutionLogProvider =
+    StateNotifierProvider<ResolutionLogNotifier, List<ResolutionEntry>>(
+        (ref) => ResolutionLogNotifier());
 
 /// Bumped on every favorites mutation so list UIs refresh.
 final favoritesVersionProvider = StateProvider<int>((ref) => 0);

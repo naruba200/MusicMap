@@ -14,6 +14,7 @@ import '../../core/constants.dart';
 import '../../data/news/news_source.dart';
 import '../providers/news_provider.dart';
 import '../providers/providers.dart';
+import 'playback_log_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -83,6 +84,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     'join results as "From ListenBrainz"'),
             trailing: const Icon(Icons.edit_outlined),
             onTap: _editListenBrainzUsername,
+          ),
+          const Divider(),
+          _sectionHeader('Playback'),
+          ListTile(
+            leading: const Icon(Icons.list_alt_outlined),
+            title: const Text('Playback log'),
+            subtitle: const Text(
+                'Which sources were tried for each track — and why '
+                'each one matched or failed'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const PlaybackLogScreen(),
+                ),
+              );
+            },
           ),
           const Divider(),
           _sectionHeader('Data'),
