@@ -1,22 +1,24 @@
 // Lyrics view for one track (Phase 5, push 1). Reached from the
 // lyrics button on a results song row. Plain lyrics first; a
 // synced-only match shows its lines without timestamps (this view
-// does not scroll along with playback — the app plays 30-second
-// previews, not the full track). Instrumental tracks and tracks
-// LRCLIB does not know get honest empty states, never an error:
-// any failure anywhere in the load lands on the empty state, so the
-// lyrics view can never break the track view that opened it.
+// does not scroll along with playback; the app plays full tracks,
+// not previews). Instrumental tracks and tracks LRCLIB does not
+// know get honest empty states, never an error: any failure
+// anywhere in the load lands on the empty state, so the lyrics view
+// can never break the track view that opened it.
 //
 // Lookup is cached in Hive for 30 days (hits and misses alike), and
-// uses a plain Dio with short timeouts and no retry interceptor
-// (plan §0). [client] and [cache] are overridable for tests.
+// uses a plain Dio with short timeouts and no retry interceptor.
+// [client] and [cache] are overridable for tests.
 
 import 'package:dio/dio.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/appearance.dart';
 import '../../data/lyrics/lrclib_client.dart';
 import '../../data/lyrics/lyrics_cache.dart';
 import '../../data/models/music_models.dart';
+import '../widgets/editorial_widgets.dart';
 
 class LyricsScreen extends StatelessWidget {
   final Track track;
@@ -60,6 +62,11 @@ class LyricsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final complex = Theme.of(context)
+            .extension<MusicManDesignTokens>()
+            ?.design ==
+        AppDesign.complex;
     return Scaffold(
       appBar: AppBar(
         title: Text(track.title,
@@ -69,85 +76,73 @@ class LyricsScreen extends StatelessWidget {
         future: _load(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const EditorialLoadingState(
+                message: 'Loading lyrics');
           }
           final lyrics = snapshot.data;
           if (lyrics == null) {
-            return _EmptyState(
-              icon: Icons.lyrics_outlined,
-              title: 'No lyrics found',
-              message: 'LRCLIB has no lyrics for '
-                  '"${track.title}" by ${track.artist} yet. '
-                  'Try again later — new lyrics are added by the '
-                  'community all the time.',
+            return EditorialEmptyState(
+              message: 'LRCLIB has no lyrics for "${track.title}" by '
+                  '${track.artist} yet. Try again later, new lyrics '
+                  'are added by the community all the time.',
             );
           }
           if (lyrics.instrumental) {
-            return _EmptyState(
-              icon: Icons.music_note_outlined,
-              title: 'Instrumental',
+            return EditorialEmptyState(
               message: 'LRCLIB lists "${track.title}" as an '
                   'instrumental track, so there are no lyrics to show.',
             );
           }
           final text = lyrics.displayText;
           if (text == null || text.isEmpty) {
-            return _EmptyState(
-              icon: Icons.lyrics_outlined,
-              title: 'No lyrics found',
-              message: 'LRCLIB returned a match for '
-                  '"${track.title}" but it carries no lyric text.',
+            return EditorialEmptyState(
+              message: 'LRCLIB returned a match for "${track.title}" '
+                  'but it carries no lyric text.',
             );
           }
+          // Lyrics set like printed lyrics in a booklet: the song
+          // and artist as the heading, the album line in Complex,
+          // a hairline rule, then the lines in a reading measure
+          // that widens in Complex.
           return SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(track.artist,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant)),
-                const SizedBox(height: 4),
-                Text('Lyrics: LRCLIB',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant)),
-                const SizedBox(height: 16),
-                SelectableText(text,
-                    style: theme.textTheme.bodyLarge
-                        ?.copyWith(height: 1.6)),
-              ],
+            padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                    maxWidth: complex ? 560 : 480),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(track.title,
+                        style: theme.textTheme.headlineSmall),
+                    const SizedBox(height: 4),
+                    Text(track.artist,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                            color: scheme.onSurfaceVariant)),
+                    if (complex && lyrics.albumName != null &&
+                        lyrics.albumName!.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text('From the album ${lyrics.albumName}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant)),
+                    ],
+                    const SizedBox(height: 16),
+                    Divider(height: 1, color: scheme.outline),
+                    const SizedBox(height: 20),
+                    SelectableText(text,
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                            height: complex ? 1.8 : 1.6)),
+                    const SizedBox(height: 24),
+                    Text('Lyrics: LRCLIB',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant)),
+                  ],
+                ),
+              ),
             ),
           );
         },
       ),
     );
   }
-}
-
-class _EmptyState extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String message;
-
-  const _EmptyState(
-      {required this.icon, required this.title, required this.message});
-
-  @override
-  Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 56),
-              const SizedBox(height: 12),
-              Text(title,
-                  style: Theme.of(context).textTheme.titleMedium,
-                  textAlign: TextAlign.center),
-              const SizedBox(height: 8),
-              Text(message, textAlign: TextAlign.center),
-            ],
-          ),
-        ),
-      );
 }

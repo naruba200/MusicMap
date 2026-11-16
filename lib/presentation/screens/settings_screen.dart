@@ -15,6 +15,7 @@ import '../../data/news/news_source.dart';
 import '../providers/news_provider.dart';
 import '../providers/providers.dart';
 import '../widgets/appearance_section.dart';
+import '../widgets/editorial_route.dart';
 import 'playback_log_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -48,11 +49,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 (auth[p.id] ?? false)
                     ? Icons.check_circle
                     : Icons.circle_outlined,
-                color: (auth[p.id] ?? false) ? Colors.green : null,
+                color: (auth[p.id] ?? false)
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurfaceVariant,
               ),
               title: Text(p.displayName),
               subtitle: Text(p.isBeta
-                  ? 'Experimental — no sign-in needed'
+                  ? 'Experimental, no sign-in needed'
                   : (auth[p.id] ?? false)
                       ? 'Signed in'
                       : 'No sign-in needed'),
@@ -83,7 +86,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             leading: const Icon(Icons.music_note_outlined),
             title: const Text('ListenBrainz username'),
             subtitle: Text(settingsRepo.listenBrainzUsername == null
-                ? 'Not set — ListenBrainz stays off'
+                ? 'Not set. ListenBrainz stays off'
                 : 'Recommendations for ${settingsRepo.listenBrainzUsername} '
                     'join results as "From ListenBrainz"'),
             trailing: const Icon(Icons.edit_outlined),
@@ -95,13 +98,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             leading: const Icon(Icons.list_alt_outlined),
             title: const Text('Playback log'),
             subtitle: const Text(
-                'Which sources were tried for each track — and why '
+                'Which sources were tried for each track, and why '
                 'each one matched or failed'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const PlaybackLogScreen(),
+                editorialRoute(
+                  context,
+                  (_) => const PlaybackLogScreen(),
                 ),
               );
             },
@@ -144,7 +148,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             leading: Icon(Icons.info_outline),
             title: Text('Music Man'),
             subtitle: Text('Turn a playlist into your next favorite songs.\n'
-                'All data stays on this device — no account, no cloud.'),
+                'All data stays on this device. No account, no cloud.'),
           ),
           Padding(
             padding:
@@ -152,7 +156,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Text(
               lastFmApiKey == 'YOUR_LASTFM_API_KEY' ||
                       lastFmApiKey.trim().isEmpty
-                  ? 'Last.fm: no API key set — recommendations are disabled '
+                  ? 'Last.fm: no API key set. Recommendations are disabled '
                       'until you add one in lib/core/constants.dart.'
                   : 'Last.fm: API key set. Recommendations engine online.',
               style: theme.textTheme.bodySmall?.copyWith(
@@ -166,12 +170,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Widget _sectionHeader(String title) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-        child: Text(title,
-            style: Theme.of(context)
-                .textTheme
-                .titleSmall
-                ?.copyWith(color: Theme.of(context).colorScheme.primary)),
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Divider(
+                height: 1,
+                color: Theme.of(context).colorScheme.outline),
+          ],
+        ),
       );
 
   Widget _countRow({
@@ -204,6 +213,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   /// FR-27: per-source toggles; a failing source shows an "unavailable" note.
   Widget _newsSourcesSection(WidgetRef ref) {
+    final theme = Theme.of(context);
     final repo = ref.watch(newsRepositoryProvider);
     final sourceOk = ref.watch(newsProvider).sourceOk;
     return Column(
@@ -212,7 +222,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           SwitchListTile(
             title: Text(s.name),
             subtitle: sourceOk[s.id] == false
-                ? const Text('Unavailable right now')
+                ? Text('Unavailable right now',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.error))
                 : null,
             value: repo.isEnabled(s.id),
             onChanged: (v) async {
@@ -240,7 +252,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           controller: controller,
           decoration: const InputDecoration(
             hintText: 'e.g. your-listenbrainz-name',
-            helperText: 'Optional. Public recommendations only — '
+            helperText: 'Optional. Public recommendations only. '
                 'no key, no sign-in. Leave blank to turn it off.',
           ),
           textInputAction: TextInputAction.done,

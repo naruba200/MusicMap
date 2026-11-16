@@ -1,7 +1,7 @@
 // Spotify WebView login (push 2): the user signs in to Spotify in an
 // in-app WebView; the sp_dc session cookie is captured and returned to
 // the platform, which stores it in secure storage. The cookie is the
-// long-lived session — the client re-mints access tokens from it, so
+// long-lived session: the client re-mints access tokens from it, so
 // the user only signs in again when Spotify rejects it.
 // No password is ever typed outside spotify.com, and no token or cookie
 // is logged.
@@ -61,20 +61,28 @@ class _SpotifyLoginScreenState extends State<SpotifyLoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(title: const Text('Sign in to Spotify')),
       body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
             child: Text(
-              'Sign in with your Spotify account. Your session stays on '
-              'this device and is only used to read playlists you paste.',
-              style: Theme.of(context).textTheme.bodySmall,
+              'Sign in with your Spotify account on spotify.com. '
+              'Your session stays on this device and is only used '
+              'to read playlists you paste. Music Man never sees '
+              'your password.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant),
             ),
           ),
           if (_progress < 100)
-            LinearProgressIndicator(value: _progress / 100),
+            LinearProgressIndicator(
+              value: _progress / 100,
+              minHeight: 2,
+            ),
           Expanded(child: WebViewWidget(controller: _controller)),
         ],
       ),
