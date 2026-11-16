@@ -5,6 +5,7 @@ export 'playlist_detail_screen.dart';
 export 'generating_screen.dart';
 export 'results_screen.dart';
 export 'album_detail_screen.dart';
+export 'why_this_song_screen.dart';
 export 'favorites_screen.dart';
 export 'history_screen.dart';
 export 'settings_screen.dart';

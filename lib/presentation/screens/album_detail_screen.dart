@@ -1,32 +1,48 @@
-// Album detail (FR-11b): large art header, track list with "Recommended"
-// badges on the recommended tracks, per-track hearts and outbound links.
+// Album detail (FR-11b, DESIGN.md): art header, album name and
+// artist, track list with "Recommended" on the recommended tracks,
+// per-track heart, "Open in platform". Track rows use
+// EditorialSongRow with doubleTapToLike false, so a tap plays
+// immediately, like a playlist row.
+//
+// Complex adds a notes line (the Discogs annotation, only when
+// enrichment actually found one) and larger art.
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/appearance.dart';
 import '../../data/engine/recommendation_engine.dart';
-import '../widgets/favorite_button.dart';
-import '../widgets/preview_button.dart';
+import '../../data/enrichment/album_enrichment.dart';
+import '../widgets/editorial_widgets.dart';
 import '../widgets/outbound_sheet.dart';
+import '../widgets/song_row.dart';
 
 class AlbumDetailScreen extends ConsumerWidget {
   final AlbumRec album;
 
-  const AlbumDetailScreen({super.key, required this.album});
+  /// Discogs / TheAudioDB annotation for this album, when the
+  /// results screen had one. Null when opened from elsewhere
+  /// (Favorites) or when no enrichment was found.
+  final AlbumEnrichment? enrichment;
+
+  const AlbumDetailScreen({super.key, required this.album, this.enrichment});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final tokens = theme.extension<MusicManDesignTokens>();
+    final isComplex = tokens?.design == AppDesign.complex;
     final recommendedKeys = {
       for (final s in album.songs)
         RecommendationEngine.normalizeKey(s.track.artist, s.track.title)
     };
+    final notesLine = _notesLine();
     return Scaffold(
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
-            expandedHeight: 280,
+            expandedHeight: isComplex ? 360 : 240,
             pinned: true,
             flexibleSpace: FlexibleSpaceBar(
               title: Text(album.name,
@@ -56,12 +72,20 @@ class AlbumDetailScreen extends ConsumerWidget {
                     style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant),
                   ),
+                  if (isComplex && notesLine != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      notesLine,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   OutlinedButton.icon(
                     onPressed: () => showAlbumOutboundSheet(
                         context, album.artist, album.name),
                     icon: const Icon(Icons.open_in_new, size: 18),
-                    label: const Text('Open album in…'),
+                    label: const Text('Open in platform'),
                   ),
                 ],
               ),
@@ -69,13 +93,9 @@ class AlbumDetailScreen extends ConsumerWidget {
           ),
           if (album.songs.isEmpty)
             const SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text(
-                  'Track listing unavailable for this surprise pick — '
-                  'open it in Spotify or Deezer to explore.',
-                  textAlign: TextAlign.center,
-                ),
+              child: EditorialEmptyState(
+                message: 'Track listing unavailable for this surprise pick. '
+                    'Open it in Spotify or Deezer to explore.',
               ),
             )
           else
@@ -86,44 +106,16 @@ class AlbumDetailScreen extends ConsumerWidget {
                   final isRec = recommendedKeys.contains(
                       RecommendationEngine.normalizeKey(
                           track.artist, track.title));
-                  return ListTile(
-                    leading: Text('${i + 1}',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant)),
-                    title: Text(track.title,
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                    subtitle: isRec
-                        ? Container(
-                            margin: const EdgeInsets.only(top: 4),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.primaryContainer,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text('Recommended',
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                    color: theme
-                                        .colorScheme.onPrimaryContainer)),
-                          )
+                  return EditorialSongRow(
+                    rank: i + 1,
+                    track: track,
+                    queue: [for (final s in album.songs) s.track],
+                    reason: isRec ? 'Recommended' : null,
+                    onOverflow: () => showOutboundSheet(context, track),
+                    doubleTapToLike: false,
+                    meta: isComplex && track.durationMs != null
+                        ? _formatDuration(track.durationMs!)
                         : null,
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        FavoriteButton(track: track),
-                        PreviewButton(
-                          track: track,
-                          queue: [
-                            for (final s in album.songs) s.track
-                          ],
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.open_in_new),
-                          tooltip: 'Open in…',
-                          onPressed: () => showOutboundSheet(context, track),
-                        ),
-                      ],
-                    ),
                   );
                 },
                 childCount: album.songs.length,
@@ -133,5 +125,30 @@ class AlbumDetailScreen extends ConsumerWidget {
       ),
     );
   }
+
+  /// Complex notes line: the honest Discogs annotation (year,
+  /// styles, community rating), never presented as Last.fm data.
+  /// Null when there is no enrichment to draw on.
+  String? _notesLine() {
+    final e = enrichment;
+    if (e == null || e.isEmpty || !e.sources.contains('Discogs')) {
+      return null;
+    }
+    final parts = <String>[];
+    if (e.year != null) parts.add('${e.year}');
+    if (e.styles.isNotEmpty) parts.add(e.styles.take(2).join(', '));
+    if (e.communityRating != null) {
+      final rating = '★ ${e.communityRating!.toStringAsFixed(1)}';
+      parts.add(e.ratingCount != null
+          ? '$rating (${e.ratingCount})'
+          : rating);
+    }
+    if (parts.isEmpty) return null;
+    return 'Discogs: ${parts.join(' • ')}';
+  }
 }
 
+String _formatDuration(int durationMs) {
+  final d = Duration(milliseconds: durationMs);
+  return '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
+}
