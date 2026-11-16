@@ -34,7 +34,7 @@ Future<void> main() async {
     };
     PlatformDispatcher.instance.onError = (error, stack) {
       _showStartupError(error.toString(), stack);
-      return true; // handled — don't kill the isolate
+      return true; // handled: don't kill the isolate
     };
 
     await Hive.initFlutter();
@@ -49,7 +49,7 @@ Future<void> main() async {
 
     // One container for the whole app, so the media notification
     // handler (created below) drives the SAME player instance the UI
-    // watches — a second container would mean a second player.
+    // watches. A second container would mean a second player.
     final container = ProviderContainer(
       overrides: [
         settingsRepositoryProvider.overrideWithValue(settingsRepo),
@@ -104,7 +104,7 @@ void _showStartupError(String error, StackTrace? stack) {
   runApp(
     MaterialApp(
       home: Scaffold(
-        appBar: AppBar(title: const Text('Music Man — startup error')),
+        appBar: AppBar(title: const Text('Music Man: startup error')),
         body: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: SelectableText(
@@ -173,9 +173,43 @@ class _RootScaffold extends ConsumerWidget {
     (Icons.settings_outlined, Icons.settings, 'Settings'),
   ];
 
+  /// A nav icon, with the small accent News dot on destination 2
+  /// while there is unseen content. The dot is a plain 6px accent
+  /// circle on the icon corner: no glow, no pulse.
+  Widget _destinationIcon(int destination, bool selected, bool hasNew) {
+    final (icon, selectedIcon, _) = _destinations[destination];
+    final base = Icon(selected ? selectedIcon : icon);
+    if (destination != 2 || !hasNew) return base;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        base,
+        Positioned(
+          right: -2,
+          top: -2,
+          child: Builder(
+            builder: (context) => Container(
+              key: const ValueKey('news-dot'),
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final index = ref.watch(tabIndexProvider);
+    // The News dot (DESIGN.md micro-interaction): a small accent dot
+    // on the News tab while there is content newer than the last
+    // visit. No glow, no pulse, it marks a real state.
+    final hasNew = ref.watch(newsProvider.select((s) => s.hasNew));
     // Playback failures surface once as a small bottom message with
     // the reason (item 3): the player bumps errorSeq per failure, so
     // the same failure is never shown twice.
@@ -193,7 +227,7 @@ class _RootScaffold extends ConsumerWidget {
     return Scaffold(
       body: IndexedStack(index: index, children: _screens),
       // The mini-player sits above the nav on every tab. It watches
-      // the player itself, so position ticks rebuild only the bar —
+      // the player itself, so position ticks rebuild only the bar;
       // this scaffold stays out of it.
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
@@ -201,14 +235,17 @@ class _RootScaffold extends ConsumerWidget {
           const MiniPlayerBar(),
           NavigationBar(
             selectedIndex: index,
-            onDestinationSelected: (i) =>
-                ref.read(tabIndexProvider.notifier).state = i,
+            onDestinationSelected: (i) {
+              // Visiting News clears the dot and records the visit.
+              if (i == 2) ref.read(newsProvider.notifier).markSeen();
+              ref.read(tabIndexProvider.notifier).state = i;
+            },
             destinations: [
-              for (final (icon, selectedIcon, label) in _destinations)
+              for (var d = 0; d < _destinations.length; d++)
                 NavigationDestination(
-                  icon: Icon(icon),
-                  selectedIcon: Icon(selectedIcon),
-                  label: label,
+                  icon: _destinationIcon(d, false, hasNew),
+                  selectedIcon: _destinationIcon(d, true, hasNew),
+                  label: _destinations[d].$3,
                 ),
             ],
           ),

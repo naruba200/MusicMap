@@ -5,6 +5,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/appearance.dart';
 import '../../core/constants.dart';
 import '../../data/discover/audius_client.dart';
 import '../../data/discover/jamendo_client.dart';
@@ -15,8 +16,23 @@ import '../../data/platforms/open_in_app.dart';
 import '../../data/models/music_models.dart';
 import '../providers/discover_provider.dart';
 import '../providers/generation_provider.dart';
-import '../widgets/preview_button.dart';
+import '../widgets/editorial_route.dart';
+import '../widgets/editorial_widgets.dart';
+import '../widgets/song_row.dart';
 import 'generating_screen.dart';
+
+/// True in Complex, where Discover shows per-tab counts and larger
+/// trending covers. Compact keeps the same lists without the extras.
+bool _isComplex(BuildContext context) =>
+    Theme.of(context).extension<MusicManDesignTokens>()?.design ==
+    AppDesign.complex;
+
+/// "3:24" for a track length, for the Complex metadata line.
+String? _durationLabel(int? durationMs) {
+  if (durationMs == null) return null;
+  final total = durationMs ~/ 1000;
+  return '${total ~/ 60}:${(total % 60).toString().padLeft(2, '0')}';
+}
 
 /// Discover screen: a TabBar with one tab per Phase 4 source.
 /// Tabs are added one push at a time (Audius first); a tab whose source
@@ -30,7 +46,14 @@ class DiscoverScreen extends ConsumerWidget {
       length: 4,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Discover'),
+          title: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              StampSquare(kanji: '新', size: 24),
+              SizedBox(width: 10),
+              Text('Discover'),
+            ],
+          ),
           bottom: const TabBar(
             tabs: [
               Tab(icon: Icon(Icons.audiotrack), text: 'Audius'),
@@ -56,7 +79,7 @@ class DiscoverScreen extends ConsumerWidget {
 // -- Audius tab -------------------------------------------------------------
 // Playback here goes through the shared player (audioPlayerProvider):
 // the rows below use PreviewButton with the tab's track list as the
-// queue, so a Discover stream keeps playing — with next/previous —
+// queue, so a Discover stream keeps playing, with next/previous,
 // after leaving the tab, and the mini-player shows it.
 
 class _AudiusTab extends ConsumerStatefulWidget {
@@ -97,14 +120,15 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
 
   void _getRecommendations(PlaylistInfo info, List<Track> tracks) {
     if (tracks.length < minUsableTracks) {
-      _snack('Need at least $minUsableTracks tracks — '
+      _snack('Need at least $minUsableTracks tracks, '
           'this playlist has ${tracks.length}.');
       return;
     }
     ref.read(generationProvider.notifier).reset();
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GeneratingScreen(
+      editorialRoute(
+        context,
+        (_) => GeneratingScreen(
           args: GenerationArgs(
             surprise: false,
             seedName: info.name,
@@ -133,7 +157,7 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 16),
-        Text('Trending', style: Theme.of(context).textTheme.titleSmall),
+        Text('Trending', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -155,19 +179,20 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
             load: load,
             sourceLabel: 'From Audius',
             onRetry: () => ref.invalidate(audiusTrendingProvider(_genre)),
+            emptyMessage: 'No trending tracks on Audius right now.',
+            countLabel: '${load.items.length} tracks trending',
           ),
-          loading: () => const Padding(
-            padding: EdgeInsets.all(16),
-            child: Center(child: CircularProgressIndicator()),
-          ),
-          error: (e, _) => _ErrorRow(
-            message: 'Couldn\'t load Audius trending.',
+          loading: () => const EditorialLoadingState(
+              message: 'Loading Audius trending'),
+          error: (e, _) => EditorialErrorState(
+            message: 'Could not load Audius trending. Check your '
+                'connection and retry.',
             onRetry: () => ref.invalidate(audiusTrendingProvider(_genre)),
           ),
         ),
         const SizedBox(height: 24),
         Text('Search tracks',
-            style: Theme.of(context).textTheme.titleSmall),
+            style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -201,7 +226,7 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
         ],
         const SizedBox(height: 24),
         Text('Import an Audius playlist',
-            style: Theme.of(context).textTheme.titleSmall),
+            style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -229,7 +254,7 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
             playlistId: _playlistId!,
             playlistProvider: audiusPlaylistProvider,
             parseLink: AudiusClient.parsePlaylistLink,
-            hint: 'That doesn\'t look like an Audius playlist link or id — '
+            hint: 'That doesn\'t look like an Audius playlist link or id. '
                 'an Audius playlist link ends in a number, e.g. '
                 'audius.co/user/playlist/name-123456.',
             fallbackOwner: 'Audius',
@@ -281,13 +306,13 @@ class _DiscoverSearchResults extends ConsumerWidget {
         load: load,
         sourceLabel: sourceLabel,
         onRetry: () => ref.invalidate(searchProvider(query)),
+        emptyMessage: 'No tracks match that search.',
+        countLabel: '${load.items.length} tracks found',
       ),
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => _ErrorRow(
-        message: errorMessage,
+      loading: () => const EditorialLoadingState(
+          message: 'Searching tracks'),
+      error: (e, _) => EditorialErrorState(
+        message: '$errorMessage Check your connection and retry.',
         onRetry: () => ref.invalidate(searchProvider(query)),
       ),
     );
@@ -328,14 +353,15 @@ class _DiscoverPlaylistView extends ConsumerWidget {
     if (resolved == null) {
       return Text(
         hint,
-        style: const TextStyle(fontStyle: FontStyle.italic),
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant),
       );
     }
     final load = ref.watch(playlistProvider(resolved));
     return load.when(
       data: (data) {
         if (data.error != null) {
-          return _ErrorRow(
+          return EditorialErrorState(
             message: data.error!,
             onRetry: () => ref.invalidate(playlistProvider(resolved)),
           );
@@ -348,7 +374,7 @@ class _DiscoverPlaylistView extends ConsumerWidget {
               contentPadding: EdgeInsets.zero,
               leading: showCover && info.coverUrl != null
                   ? ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(2),
                       child: Image.network(info.coverUrl!,
                           width: 48, height: 48, fit: BoxFit.cover),
                     )
@@ -370,15 +396,15 @@ class _DiscoverPlaylistView extends ConsumerWidget {
               load: DiscoverLoad(items: data.tracks),
               sourceLabel: sourceLabel,
               onRetry: () => ref.invalidate(playlistProvider(resolved)),
+              emptyMessage: 'This playlist has no tracks.',
+              countLabel: '${data.tracks.length} tracks',
             ),
           ],
         );
       },
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => _ErrorRow(
+      loading: () => const EditorialLoadingState(
+          message: 'Loading playlist'),
+      error: (e, _) => EditorialErrorState(
         message: importErrorMessage,
         onRetry: () => ref.invalidate(playlistProvider(resolved)),
       ),
@@ -388,72 +414,65 @@ class _DiscoverPlaylistView extends ConsumerWidget {
 
 /// Shared track list with full-stream playback through the shared
 /// player. The [load] error label is shown inline; an empty list with
-/// no error means "nothing found", not a failure. Rows play via
-/// [PreviewButton] with the whole list as the queue, so next/previous
-/// walk the tab's tracks.
+/// no error means "nothing found", not a failure. Rows are editorial
+/// song rows (tap plays immediately, like playlist rows) with the
+/// whole list as the queue, so next/previous walk the tab's tracks.
+/// In Complex the list gains a count caption and larger covers.
 class _TrackList extends StatelessWidget {
   final DiscoverLoad<Track> load;
   final String sourceLabel;
   final VoidCallback onRetry;
+  final String emptyMessage;
+  final String? countLabel;
 
   const _TrackList({
     required this.load,
     required this.sourceLabel,
     required this.onRetry,
+    this.emptyMessage = 'Nothing here yet.',
+    this.countLabel,
   });
 
   @override
   Widget build(BuildContext context) {
     if (load.error != null) {
-      return _ErrorRow(message: load.error!, onRetry: onRetry);
+      return EditorialErrorState(message: load.error!, onRetry: onRetry);
     }
     if (load.items.isEmpty) {
-      return Text(
-        'Nothing here yet.',
-        style: Theme.of(context).textTheme.bodySmall,
-      );
+      return EditorialEmptyState(message: emptyMessage);
     }
+    final complex = _isComplex(context);
+    final scheme = Theme.of(context).colorScheme;
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final track in load.items)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: track.imageUrl != null
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Image.network(track.imageUrl!,
-                        width: 48, height: 48, fit: BoxFit.cover),
-                  )
-                : const Icon(Icons.audiotrack, size: 40),
-            title: Text(track.title,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text('$sourceLabel · ${track.artist}',
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            trailing: track.streamUrl == null
-                ? null
-                : PreviewButton(track: track, queue: load.items),
+        if (complex && countLabel != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text(
+              countLabel!,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant),
+            ),
           ),
-      ],
-    );
-  }
-}
-
-class _ErrorRow extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-
-  const _ErrorRow({required this.message, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(message,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.error)),
-        ),
-        TextButton(onPressed: onRetry, child: const Text('Retry')),
+        for (final track in load.items)
+          Container(
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: scheme.outline)),
+            ),
+            child: EditorialSongRow(
+              track: track,
+              queue: load.items,
+              doubleTapToLike: false,
+              coverSize: complex ? 64 : 48,
+              // The tab already names the source; the Complex line
+              // carries the track length, or the source when the
+              // track reports no length.
+              meta: complex
+                  ? (_durationLabel(track.durationMs) ?? sourceLabel)
+                  : null,
+            ),
+          ),
       ],
     );
   }
@@ -492,14 +511,15 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
 
   void _getRecommendations(PlaylistInfo info, List<Track> tracks) {
     if (tracks.length < minUsableTracks) {
-      _snack('Need at least $minUsableTracks tracks — '
+      _snack('Need at least $minUsableTracks tracks, '
           'this playlist has ${tracks.length}.');
       return;
     }
     ref.read(generationProvider.notifier).reset();
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GeneratingScreen(
+      editorialRoute(
+        context,
+        (_) => GeneratingScreen(
           args: GenerationArgs(
             surprise: false,
             seedName: info.name,
@@ -525,7 +545,13 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
       padding: const EdgeInsets.all(16),
       children: [
         if (!configured)
-          Card(
+          Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              border: Border.all(
+                  color: Theme.of(context).colorScheme.outline),
+              borderRadius: BorderRadius.circular(4),
+            ),
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Text(
@@ -534,20 +560,21 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
                 'client_id in jamendoClientId (lib/core/constants.dart). '
                 'Until then, everything below shows this hint instead of '
                 'failing calls.',
-                style: Theme.of(context).textTheme.bodySmall,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
             ),
           ),
         if (!configured) const SizedBox(height: 16),
         Text(
-          'Jamendo is Creative Commons music — free to stream in full '
+          'Jamendo is Creative Commons music, free to stream in full '
           'here, inside this tab only. Jamendo tracks never mix into '
           'your main recommendations.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 16),
         Text('Search tracks',
-            style: Theme.of(context).textTheme.titleSmall),
+            style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -581,7 +608,7 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
         ],
         const SizedBox(height: 24),
         Text('Import a Jamendo playlist',
-            style: Theme.of(context).textTheme.titleSmall),
+            style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -611,7 +638,7 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
             playlistId: _playlistId!,
             playlistProvider: jamendoPlaylistProvider,
             parseLink: JamendoClient.parsePlaylistLink,
-            hint: 'That doesn\'t look like a Jamendo playlist link or id — '
+            hint: 'That doesn\'t look like a Jamendo playlist link or id. '
                 'a Jamendo playlist link contains /playlist/<number>.',
             fallbackOwner: 'Jamendo',
             showCover: false,
@@ -621,7 +648,7 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
           ),
         ],
         const SizedBox(height: 24),
-        Text('Radios', style: Theme.of(context).textTheme.titleSmall),
+        Text('Radios', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         const _JamendoRadiosView(),
       ],
@@ -633,7 +660,7 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
 /// Curated Jamendo radios. Playback is best-effort: when the radios/stream
 /// endpoint returns no stream URL, the row explains instead of failing.
 /// A radio plays through the shared player as a single-track queue
-/// (no duration — a live stream never reports one).
+/// (no duration; a live stream never reports one).
 class _JamendoRadiosView extends ConsumerWidget {
   const _JamendoRadiosView();
 
@@ -645,83 +672,99 @@ class _JamendoRadiosView extends ConsumerWidget {
     return radios.when(
       data: (load) {
         if (load.error != null) {
-          return _ErrorRow(
+          return EditorialErrorState(
               message: load.error!,
               onRetry: () => ref.invalidate(jamendoRadiosProvider));
         }
         if (load.items.isEmpty) {
-          return Text(
-            'No radios here yet.',
-            style: Theme.of(context).textTheme.bodySmall,
-          );
+          return const EditorialEmptyState(
+              message: 'No radios here yet.');
         }
+        final complex = _isComplex(context);
+        final scheme = Theme.of(context).colorScheme;
         return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (complex)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                child: Text(
+                  '${load.items.length} radios',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: scheme.onSurfaceVariant),
+                ),
+              ),
             for (final radio in load.items)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: radio.imageUrl != null
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: Image.network(radio.imageUrl!,
-                            width: 48, height: 48, fit: BoxFit.cover),
-                      )
-                    : const Icon(Icons.radio, size: 40),
-                title: Text(radio.name,
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-                subtitle: const Text('From Jamendo · radio'),
-                trailing: IconButton(
-                  icon: Icon(
-                    playerState.isPlaying &&
-                            playerState.currentKey ==
-                                RecommendationEngine.normalizeKey(
-                                    'Jamendo Radio', radio.name)
-                        ? Icons.pause
-                        : Icons.play_arrow,
-                  ),
-                  onPressed: () async {
-                    final radioTrack = Track(
-                      title: radio.name,
-                      artist: 'Jamendo Radio',
-                      imageUrl: radio.imageUrl,
-                      platformTrackId: 'radio:${radio.id}',
-                    );
-                    if (playerState.currentKey ==
-                            RecommendationEngine.normalizeKey(
-                                'Jamendo Radio', radio.name) &&
-                        !playerState.isResolving) {
-                      await player.togglePlayPause();
-                      return;
-                    }
-                    final stream = await ref
-                        .read(jamendoClientProvider)
-                        .radioStreamUrl(radio.id);
-                    if (stream == null) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                                'This radio has no in-app stream — '
-                                'listen to it on jamendo.com.'),
-                          ),
-                        );
+              Container(
+                decoration: BoxDecoration(
+                  border:
+                      Border(bottom: BorderSide(color: scheme.outline)),
+                ),
+                child: ListTile(
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16),
+                  leading: radio.imageUrl != null
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: Image.network(radio.imageUrl!,
+                              width: 48, height: 48, fit: BoxFit.cover),
+                        )
+                      : const Icon(Icons.radio, size: 40),
+                  title: Text(radio.name,
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: const Text('From Jamendo · radio'),
+                  trailing: IconButton(
+                    icon: Icon(
+                      playerState.isPlaying &&
+                              playerState.currentKey ==
+                                  RecommendationEngine.normalizeKey(
+                                      'Jamendo Radio', radio.name)
+                          ? Icons.pause
+                          : Icons.play_arrow,
+                    ),
+                    onPressed: () async {
+                      final radioTrack = Track(
+                        title: radio.name,
+                        artist: 'Jamendo Radio',
+                        imageUrl: radio.imageUrl,
+                        platformTrackId: 'radio:${radio.id}',
+                      );
+                      if (playerState.currentKey ==
+                              RecommendationEngine.normalizeKey(
+                                  'Jamendo Radio', radio.name) &&
+                          !playerState.isResolving) {
+                        await player.togglePlayPause();
+                        return;
                       }
-                      return;
-                    }
-                    await player.playStream(radioTrack, stream,
-                        source: 'full');
-                  },
+                      final stream = await ref
+                          .read(jamendoClientProvider)
+                          .radioStreamUrl(radio.id);
+                      if (stream == null) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                  'This radio has no in-app stream, '
+                                  'listen to it on jamendo.com.'),
+                            ),
+                          );
+                        }
+                        return;
+                      }
+                      await player.playStream(radioTrack, stream,
+                          source: 'full');
+                    },
+                  ),
                 ),
               ),
           ],
         );
       },
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => _ErrorRow(
-        message: 'Couldn\'t load Jamendo radios.',
+      loading: () => const EditorialLoadingState(
+          message: 'Loading Jamendo radios'),
+      error: (e, _) => EditorialErrorState(
+        message: 'Could not load Jamendo radios. Check your connection '
+            'and retry.',
         onRetry: () => ref.invalidate(jamendoRadiosProvider),
       ),
     );
@@ -759,14 +802,15 @@ class _OpenwhydTabState extends ConsumerState<_OpenwhydTab> {
 
   void _getRecommendations(PlaylistInfo info, List<Track> tracks) {
     if (tracks.length < minUsableTracks) {
-      _snack('Need at least $minUsableTracks tracks — '
+      _snack('Need at least $minUsableTracks tracks, '
           'this playlist has ${tracks.length}.');
       return;
     }
     ref.read(generationProvider.notifier).reset();
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GeneratingScreen(
+      editorialRoute(
+        context,
+        (_) => GeneratingScreen(
           args: GenerationArgs(
             surprise: false,
             seedName: info.name,
@@ -790,13 +834,13 @@ class _OpenwhydTabState extends ConsumerState<_OpenwhydTab> {
       children: [
         Text(
           'Openwhyd playlists are curated lists of tracks from other '
-          'platforms — each track opens on its original site. Nothing '
+          'platforms, each track opens on its original site. Nothing '
           'here mixes into your main recommendations.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 16),
         Text('Import a public Openwhyd playlist',
-            style: Theme.of(context).textTheme.titleSmall),
+            style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -861,7 +905,7 @@ class _OpenwhydPlaylistView extends ConsumerWidget {
     return load.when(
       data: (data) {
         if (data.error != null) {
-          return _ErrorRow(
+          return EditorialErrorState(
             message: data.error!,
             onRetry: () =>
                 ref.invalidate(openwhydPlaylistProvider(playlistKey)),
@@ -892,12 +936,11 @@ class _OpenwhydPlaylistView extends ConsumerWidget {
           ],
         );
       },
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => _ErrorRow(
-        message: 'Couldn\'t import that Openwhyd playlist.',
+      loading: () => const EditorialLoadingState(
+          message: 'Loading Openwhyd playlist'),
+      error: (e, _) => EditorialErrorState(
+        message: 'Could not import that Openwhyd playlist. Check the '
+            'link and your connection, then retry.',
         onRetry: () =>
             ref.invalidate(openwhydPlaylistProvider(playlistKey)),
       ),
@@ -916,11 +959,10 @@ class _OpenwhydTrackList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (tracks.isEmpty) {
-      return Text(
-        'Nothing here yet.',
-        style: Theme.of(context).textTheme.bodySmall,
-      );
+      return const EditorialEmptyState(
+          message: 'This playlist has no tracks.');
     }
+    final scheme = Theme.of(context).colorScheme;
     final rows = <Widget>[];
     for (final track in tracks) {
       // No button when the eId prefix is unknown: tapping a dead button
@@ -929,27 +971,34 @@ class _OpenwhydTrackList extends StatelessWidget {
           ? null
           : OpenwhydClient.originalUrl({'eId': track.platformTrackId});
       rows.add(
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: track.imageUrl != null
-              ? ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: Image.network(track.imageUrl!,
-                      width: 48, height: 48, fit: BoxFit.cover),
-                )
-              : const Icon(Icons.audiotrack, size: 40),
-          title: Text(track.title,
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text('From Openwhyd · ${track.artist}',
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-          trailing: url == null
-              ? null
-              : IconButton(
-                  icon: const Icon(Icons.open_in_new),
-                  onPressed: () async {
-                    await openLinkInAppFirst(Uri.parse(url));
-                  },
-                ),
+        Container(
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: scheme.outline)),
+          ),
+          child: ListTile(
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16),
+            leading: track.imageUrl != null
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: Image.network(track.imageUrl!,
+                        width: 48, height: 48, fit: BoxFit.cover),
+                  )
+                : const Icon(Icons.audiotrack, size: 40),
+            title: Text(track.title,
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text('From Openwhyd · ${track.artist}',
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            trailing: url == null
+                ? null
+                : IconButton(
+                    icon: const Icon(Icons.open_in_new),
+                    tooltip: 'Open original',
+                    onPressed: () async {
+                      await openLinkInAppFirst(Uri.parse(url));
+                    },
+                  ),
+          ),
         ),
       );
     }
@@ -959,7 +1008,7 @@ class _OpenwhydTrackList extends StatelessWidget {
 
 // -- Mixcloud tab -----------------------------------------------------------
 // Shows/mixes browser ONLY: popular/hot/new feeds, show search, and tag
-// search. Shows open in Mixcloud (app/browser) — there is no in-app
+// search. Shows open in Mixcloud (app/browser); there is no in-app
 // Mixcloud playback, and nothing here feeds the song generator at all.
 
 class _MixcloudTab extends ConsumerStatefulWidget {
@@ -992,7 +1041,7 @@ class _MixcloudTabState extends ConsumerState<_MixcloudTab> {
       children: [
         Text(
           'Mixcloud is DJ mixes, radio shows and podcasts. Shows open '
-          'in Mixcloud — they never play here and never feed the song '
+          'in Mixcloud. They never play here and never feed the song '
           'generator.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
@@ -1020,7 +1069,7 @@ class _MixcloudTabState extends ConsumerState<_MixcloudTab> {
         ),
         const SizedBox(height: 16),
         Text('Search shows',
-            style: Theme.of(context).textTheme.titleSmall),
+            style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -1051,7 +1100,7 @@ class _MixcloudTabState extends ConsumerState<_MixcloudTab> {
         ),
         const SizedBox(height: 16),
         Text('Search tags',
-            style: Theme.of(context).textTheme.titleSmall),
+            style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -1092,7 +1141,7 @@ class _MixcloudTabState extends ConsumerState<_MixcloudTab> {
             children: [
               Expanded(
                 child: Text('Shows tagged "$_tagName"',
-                    style: Theme.of(context).textTheme.titleSmall),
+                    style: Theme.of(context).textTheme.titleMedium),
               ),
               TextButton(
                 onPressed: () => setState(() {
@@ -1105,11 +1154,11 @@ class _MixcloudTabState extends ConsumerState<_MixcloudTab> {
           )
         else if (_showQuery.isNotEmpty)
           Text('Results for "$_showQuery"',
-              style: Theme.of(context).textTheme.titleSmall)
+              style: Theme.of(context).textTheme.titleMedium)
         else
           Text(
               '${_feed[0].toUpperCase()}${_feed.substring(1)} shows',
-              style: Theme.of(context).textTheme.titleSmall),
+              style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         _MixcloudShowSection(
           feed: _feed,
@@ -1150,12 +1199,11 @@ class _MixcloudShowSection extends ConsumerWidget {
     }
     return shows.when(
       data: (load) => _MixcloudShowList(load: load, onRetry: onRetry),
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => _ErrorRow(
-        message: 'Couldn\'t load Mixcloud shows.',
+      loading: () => const EditorialLoadingState(
+          message: 'Loading Mixcloud shows'),
+      error: (e, _) => EditorialErrorState(
+        message: 'Could not load Mixcloud shows. Check your connection '
+            'and retry.',
         onRetry: onRetry,
       ),
     );
@@ -1172,45 +1220,62 @@ class _MixcloudShowList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (load.error != null) {
-      return _ErrorRow(message: load.error!, onRetry: onRetry);
+      return EditorialErrorState(message: load.error!, onRetry: onRetry);
     }
     if (load.items.isEmpty) {
-      return Text(
-        'Nothing here yet.',
-        style: Theme.of(context).textTheme.bodySmall,
-      );
+      return const EditorialEmptyState(
+          message: 'No shows here yet.');
     }
+    final complex = _isComplex(context);
+    final scheme = Theme.of(context).colorScheme;
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final show in load.items)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: show.imageUrl != null
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Image.network(show.imageUrl!,
-                        width: 48, height: 48, fit: BoxFit.cover),
-                  )
-                : const Icon(Icons.radio, size: 40),
-            title: Text(show.name,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(
-              [
-                if (show.userName != null) show.userName!,
-                if (show.audioLengthSec != null)
-                  MixcloudClient.formatLength(show.audioLengthSec!),
-              ].join(' · '),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+        if (complex)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text(
+              '${load.items.length} shows',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant),
             ),
-            trailing: show.url.isEmpty
-                ? null
-                : IconButton(
-                    icon: const Icon(Icons.open_in_new),
-                    onPressed: () async {
-                      await openLinkInAppFirst(Uri.parse(show.url));
-                    },
-                  ),
+          ),
+        for (final show in load.items)
+          Container(
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: scheme.outline)),
+            ),
+            child: ListTile(
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 16),
+              leading: show.imageUrl != null
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: Image.network(show.imageUrl!,
+                          width: 48, height: 48, fit: BoxFit.cover),
+                    )
+                  : const Icon(Icons.radio, size: 40),
+              title: Text(show.name,
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(
+                [
+                  if (show.userName != null) show.userName!,
+                  if (show.audioLengthSec != null)
+                    MixcloudClient.formatLength(show.audioLengthSec!),
+                ].join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: show.url.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.open_in_new),
+                      tooltip: 'Open in Mixcloud',
+                      onPressed: () async {
+                        await openLinkInAppFirst(Uri.parse(show.url));
+                      },
+                    ),
+            ),
           ),
       ],
     );
@@ -1230,17 +1295,15 @@ class _MixcloudTagResults extends ConsumerWidget {
     return tags.when(
       data: (load) {
         if (load.error != null) {
-          return _ErrorRow(
+          return EditorialErrorState(
             message: load.error!,
             onRetry: () =>
                 ref.invalidate(mixcloudTagSearchProvider(query)),
           );
         }
         if (load.items.isEmpty) {
-          return Text(
-            'No tags found.',
-            style: Theme.of(context).textTheme.bodySmall,
-          );
+          return const EditorialEmptyState(
+              message: 'No tags match that search.');
         }
         return Wrap(
           spacing: 8,
@@ -1254,12 +1317,11 @@ class _MixcloudTagResults extends ConsumerWidget {
           ],
         );
       },
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => _ErrorRow(
-        message: 'Mixcloud tag search failed.',
+      loading: () => const EditorialLoadingState(
+          message: 'Searching tags'),
+      error: (e, _) => EditorialErrorState(
+        message: 'Mixcloud tag search failed. Check your connection '
+            'and retry.',
         onRetry: () => ref.invalidate(mixcloudTagSearchProvider(query)),
       ),
     );

@@ -28,7 +28,8 @@ import '../screens/spotify_login_screen.dart';
 /// Global navigator key so deep links can push routes from providers.
 final navigatorKey = GlobalKey<NavigatorState>();
 
-/// Bottom-nav tab index: 0 Home, 1 News, 2 Favorites, 3 History, 4 Settings.
+/// Bottom-nav tab index: 0 Home, 1 Discover, 2 News, 3 Favorites,
+/// 4 History, 5 Settings.
 final tabIndexProvider = StateProvider<int>((ref) => 0);
 
 // -- Core singletons --------------------------------------------------------
@@ -259,7 +260,7 @@ class SavedPlaylistsNotifier extends StateNotifier<List<SavedPlaylist>> {
     // the saved copy untouched and tell the user to retry.
     if (truncated) {
       throw const PlatformException(
-          'Could not load the full playlist — the saved copy was left '
+          'Could not load the full playlist. The saved copy was left '
           'unchanged. Try the rescan again.');
     }
 
@@ -322,10 +323,10 @@ final deepLinkHandlerProvider = Provider<void>((ref) {
     }
   }
 
-  // receive_sharing_intent is Android/iOS only — guard so the app also
-  // runs on desktop/web for UI testing (share-receive just doesn't exist
-  // there). NOTE: use defaultTargetPlatform, not dart:io's Platform —
-  // the latter throws UnsupportedError on web.
+  // receive_sharing_intent is Android/iOS only, so guard so the app
+  // also runs on desktop/web for UI testing (share-receive just
+  // doesn't exist there). NOTE: use defaultTargetPlatform, not
+  // dart:io's Platform: the latter throws UnsupportedError on web.
   final target = defaultTargetPlatform;
   if (target == TargetPlatform.android || target == TargetPlatform.iOS) {
     ReceiveSharingIntent.instance.getMediaStream().listen(openSharedFiles);

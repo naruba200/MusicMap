@@ -15,6 +15,21 @@ class NewsState {
   final Map<String, bool> sourceOk;
   final String? error;
 
+  /// True when a refresh returned articles the user has not seen yet
+  /// (DESIGN.md: News tab dot). Cleared by [NewsNotifier.markSeen].
+  final bool hasNew;
+
+  /// Article links the user has seen (recorded by [markSeen], and
+  /// baselined on the first load so the first load never counts as
+  /// new). A refresh compares its links against this set.
+  final Set<String> seenLinks;
+
+  /// True once a seen set has been established (first load or a
+  /// visit), even when that set is empty: without this, an empty
+  /// first load would leave [seenLinks] empty and the next refresh
+  /// would look like another first load instead of new content.
+  final bool seenBaseline;
+
   const NewsState({
     this.loading = false,
     this.articles = const [],
@@ -22,6 +37,9 @@ class NewsState {
     this.fromCache = false,
     this.sourceOk = const {},
     this.error,
+    this.hasNew = false,
+    this.seenLinks = const {},
+    this.seenBaseline = false,
   });
 
   NewsState copyWith({
@@ -31,6 +49,9 @@ class NewsState {
     bool? fromCache,
     Map<String, bool>? sourceOk,
     String? error,
+    bool? hasNew,
+    Set<String>? seenLinks,
+    bool? seenBaseline,
   }) =>
       NewsState(
         loading: loading ?? this.loading,
@@ -39,6 +60,9 @@ class NewsState {
         fromCache: fromCache ?? this.fromCache,
         sourceOk: sourceOk ?? this.sourceOk,
         error: error,
+        hasNew: hasNew ?? this.hasNew,
+        seenLinks: seenLinks ?? this.seenLinks,
+        seenBaseline: seenBaseline ?? this.seenBaseline,
       );
 }
 
@@ -53,11 +77,20 @@ class NewsNotifier extends StateNotifier<NewsState> {
     state = state.copyWith(loading: true, error: null);
     try {
       final result = await _repo.fetch(forceRefresh: force);
+      final links = result.articles.map((a) => a.link).toSet();
+      // No prior seen set: this is the first load, so it baselines
+      // the seen set instead of counting as new.
+      final hasNew = !state.seenBaseline
+          ? false
+          : links.difference(state.seenLinks).isNotEmpty;
       state = NewsState(
         articles: result.articles,
         fetchedAt: result.fetchedAt,
         fromCache: result.fromCache,
         sourceOk: result.sourceOk,
+        hasNew: hasNew,
+        seenLinks: state.seenBaseline ? state.seenLinks : links,
+        seenBaseline: true,
       );
     } catch (e) {
       state = state.copyWith(
@@ -65,6 +98,16 @@ class NewsNotifier extends StateNotifier<NewsState> {
         error: 'Couldn\'t load news. Pull to retry.',
       );
     }
+  }
+
+  /// The user visited News: clear the dot and record the current
+  /// articles as seen, so the next refresh can tell new from old.
+  void markSeen() {
+    state = state.copyWith(
+      hasNew: false,
+      seenLinks: state.articles.map((a) => a.link).toSet(),
+      seenBaseline: true,
+    );
   }
 }
 
