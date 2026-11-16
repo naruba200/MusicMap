@@ -19,20 +19,20 @@ import 'fake_audio_backend.dart';
 const _trackA = Track(
   artist: 'Singer A',
   title: 'Song A',
-  previewUrl: 'https://example.com/a.m4a',
+  streamUrl: 'https://example.com/a.m4a',
   imageUrl: 'https://example.com/a.jpg',
 );
 const _trackB = Track(
   artist: 'Singer B',
   title: 'Song B',
-  previewUrl: 'https://example.com/b.m4a',
+  streamUrl: 'https://example.com/b.m4a',
 );
 const _trackC = Track(
   artist: 'Singer C',
   title: 'Song C',
-  previewUrl: 'https://example.com/c.m4a',
+  streamUrl: 'https://example.com/c.m4a',
 );
-const _trackNoPreview = Track(
+const _trackNoStream = Track(
   artist: 'Singer X',
   title: 'Song X',
 );
@@ -216,9 +216,9 @@ void main() {
       final notifier = _notifier(backend, fallbacks: fallbacks);
       final handler = MusicManAudioHandler(notifier);
       addTearDown(handler.dispose);
-      await notifier.play(_trackA, queue: [_trackA, _trackNoPreview]);
-      // Next track has no preview anywhere; the resolve hangs on the
-      // gated fallback, so the handler must show loading meanwhile.
+      await notifier.play(_trackA, queue: [_trackA, _trackNoStream]);
+      // Next track has no full song anywhere; the resolve hangs on
+      // the gated fallback, so the handler must show loading meanwhile.
       final next = handler.skipToNext();
       await _pump();
       expect(handler.playbackState.value.processingState,
@@ -230,7 +230,7 @@ void main() {
       expect(handler.playbackState.value.processingState,
           audioservice.AudioProcessingState.error);
       expect(handler.playbackState.value.errorMessage,
-          'No preview found for this track');
+          'No full stream found for this track');
     });
 
     test('a backend load failure surfaces as an error state', () async {
@@ -248,29 +248,17 @@ void main() {
   });
 }
 
-/// FallbackSources whose preview lookups all hang on one gated
+/// FallbackSources whose link lookups all hang on one gated
 /// future, so a test can observe the resolving window and then
-/// decide the outcome. The Audius last resort is never reached: the
-/// notifier under test has no Audius client.
+/// decide the outcome. The Audius / YouTube steps are never reached:
+/// the notifier under test has no Audius or YouTube client.
 class _GatedFallbacks extends FallbackSources {
   final Future<String?> _gated;
   _GatedFallbacks(this._gated);
 
   @override
-  Future<String?> itunesTrackPreview(String artist, String title) =>
-      _gated;
+  Future<String?> itunesTrackLink(String artist, String title) => _gated;
 
   @override
-  Future<String?> deezerTrackPreview(String artist, String title) =>
-      _gated;
-
-  @override
-  Future<String?> itunesTrackPreviewTitleOnly(
-          String artist, String title) =>
-      _gated;
-
-  @override
-  Future<String?> deezerTrackPreviewTitleOnly(
-          String artist, String title) =>
-      _gated;
+  Future<String?> deezerTrackLink(String artist, String title) => _gated;
 }

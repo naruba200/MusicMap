@@ -1,12 +1,11 @@
-// Play/pause button for a track preview, shared by the Results,
+// Play/pause button for a full track, shared by the Results,
 // Album Detail, and Playlist Detail screens (it was previously a
 // private widget duplicated in Results and Album Detail).
 //
-// The button is always tappable: a tap on a preview-less track runs
-// the on-demand lookup in AudioPlayerNotifier instead of doing
-// nothing. A resolved Audius full track is labelled honestly as a
-// full track, never as a preview (see AudioPlayerNotifier
-// .previewSourceFor); every other resolution is a 30-second preview.
+// The button is always tappable: a tap on a track with no full song
+// runs the full-song lookup in AudioPlayerNotifier instead of doing
+// nothing. Every resolution is a full track (see AudioPlayerNotifier
+// .streamSourceFor) — there are no previews anymore.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
@@ -39,12 +38,6 @@ class PreviewButton extends ConsumerWidget {
         playerState.isPlaying && playerState.currentKey == key;
     final isResolving =
         playerState.isResolving && playerState.resolvingKey == key;
-    // Any non-preview resolution is a full track (Audius search or a
-    // stream handed to playStream, e.g. Jamendo) — labelled without a
-    // source name, since the source is not always Audius.
-    final source = player.previewSourceFor(track);
-    final isFullTrack = source != null && source != 'preview';
-
     if (isResolving) {
       return const Padding(
         padding: EdgeInsets.all(14),
@@ -59,9 +52,7 @@ class PreviewButton extends ConsumerWidget {
     return IconButton(
       icon: Icon(isPlaying ? Icons.pause : Icons.play_circle_outline,
           color: isPlaying ? Theme.of(context).colorScheme.primary : null),
-      tooltip: isFullTrack
-          ? (isPlaying ? 'Pause full track' : 'Play full track')
-          : (isPlaying ? 'Pause preview' : 'Play preview'),
+      tooltip: isPlaying ? 'Pause full track' : 'Play full track',
       onPressed: () => player.play(track, queue: queue),
     );
   }

@@ -14,6 +14,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:music_man/data/fallback/fallback_sources.dart';
 import 'package:music_man/data/models/music_models.dart';
+import 'package:music_man/data/fullsong/full_song_resolver.dart';
 import 'package:music_man/presentation/providers/generation_provider.dart';
 
 import 'fake_audio_backend.dart';
@@ -21,17 +22,17 @@ import 'fake_audio_backend.dart';
 const _trackA = Track(
   artist: 'Singer A',
   title: 'Song A',
-  previewUrl: 'https://example.com/a.m4a',
+  streamUrl: 'https://example.com/a.m4a',
 );
 const _trackB = Track(
   artist: 'Singer B',
   title: 'Song B',
-  previewUrl: 'https://example.com/b.m4a',
+  streamUrl: 'https://example.com/b.m4a',
 );
 const _trackC = Track(
   artist: 'Singer C',
   title: 'Song C',
-  previewUrl: 'https://example.com/c.m4a',
+  streamUrl: 'https://example.com/c.m4a',
 );
 
 AudioPlayerNotifier _notifier(FakeAudioBackend backend,
@@ -204,12 +205,12 @@ void main() {
       expect(notifier.state.isPlaying, isTrue);
       expect(notifier.state.currentTrack, _trackA);
       expect(notifier.state.queueIndex, 0);
-      expect(notifier.previewSourceFor(_trackA), 'full');
+      expect(notifier.streamSourceFor(_trackA), 'full');
     });
   });
 
   group('playback failure reasons', () {
-    test('no preview anywhere records the reason and stays stopped',
+    test('no full stream anywhere records the reason and stays stopped',
         () async {
       final dio = Dio();
       dio.httpClientAdapter = _EmptyAdapter();
@@ -220,7 +221,7 @@ void main() {
       await notifier.play(track);
       expect(notifier.state.currentTrack, isNull);
       expect(notifier.state.isPlaying, isFalse);
-      expect(notifier.state.lastError, 'No preview found for this track');
+      expect(notifier.state.lastError, 'No full stream found for this track');
       expect(notifier.state.errorSeq, 1);
       expect(backend.playedUrls, isEmpty);
     });
@@ -246,8 +247,22 @@ void main() {
 
     test('playbackErrorMessage maps the cases directly', () {
       expect(
-        AudioPlayerNotifier.playbackErrorMessage('', noPreview: true),
-        'No preview found for this track',
+        AudioPlayerNotifier.playbackErrorMessage(
+            '', failure: FullSongFailure.noStream),
+        'No full stream found for this track',
+      );
+      expect(
+        AudioPlayerNotifier.playbackErrorMessage(
+          '',
+          failure: FullSongFailure.network,
+          networkSource: 'audius',
+        ),
+        "Couldn't reach audius — check your connection",
+      );
+      expect(
+        AudioPlayerNotifier.playbackErrorMessage(
+            '', failure: FullSongFailure.spotifyAudioUnavailable),
+        "Spotify audio can't play in-app",
       );
       expect(
         AudioPlayerNotifier.playbackErrorMessage(
@@ -268,7 +283,7 @@ void main() {
 }
 
 /// Answers empty iTunes/Deezer results for every request, so the
-/// on-demand preview chain finds nothing (no live network).
+/// full-song resolver finds nothing (no live network).
 class _EmptyAdapter implements HttpClientAdapter {
   @override
   Future<ResponseBody> fetch(

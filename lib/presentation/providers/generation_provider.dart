@@ -19,13 +19,20 @@ import '../../data/enrichment/enrichment_cache.dart';
 import '../../data/enrichment/enrichment_models.dart';
 import '../../data/enrichment/musicbrainz_client.dart';
 import '../../data/discover/audius_client.dart';
+import '../../data/discover/jamendo_client.dart';
+import '../../data/export/visionos_player_client.dart';
+import '../../data/export/youtube_export.dart';
 import '../../data/fallback/fallback_sources.dart';
 import '../../data/fallback/listenbrainz_client.dart';
+import '../../data/fullsong/full_song_resolver.dart';
 import '../../data/lastfm/lastfm_client.dart';
 import '../../data/models/music_models.dart';
+import '../../data/platforms/open_in_app.dart';
 import '../../data/repositories/favorites_repository.dart';
 import '../../data/repositories/history_repository.dart';
 import '../../data/repositories/settings_repository.dart';
+import '../../data/spotify/spotify_client.dart';
+import '../../data/spotify/spotify_session.dart';
 import 'audio_backend.dart';
 import 'providers.dart';
 
@@ -397,9 +404,11 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       final similarBySeed = <int, List<SimilarTrack>>{};
       final fallbackBySeed = <int, List<SimilarTrack>>{};
       final fallbackReasonBySeed = <int, String>{};
-      // previewUrl by normalized key, so tracks from iTunes carry a
-      // 30-second preview URL for in-app playback.
-      final previewByKey = <String, String>{};
+      // NOTE (full-song pivot): the seed resolution still returns
+      // iTunes/Deezer preview URLs alongside the fallback tracks
+      // (same responses, no extra calls), but they are NOT attached
+      // to generated tracks anymore — playback is full-song only and
+      // never reads track.previewUrl.
       var skipped = 0;
       // Batched (5 in flight) instead of one seed at a time: the
       // sources within one seed already run concurrently, but seeds
@@ -443,8 +452,9 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
                 resolved.fallbackReason ??
                 'More from ${RecommendationEngine.primaryArtist(seed.artist)}';
           }
-          // Stash iTunes preview URLs by normalized track key.
-          previewByKey.addAll(resolved.fallbackPreviews);
+          // iTunes/Deezer preview URLs that used to ride along here
+          // are deliberately dropped (see above): playback never
+          // reads track.previewUrl anymore.
         }
       }
       if (similarBySeed.isEmpty && fallbackBySeed.isEmpty) {
@@ -749,30 +759,6 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         total: settings.songCount,
         seedKeys: seedKeys,
       );
-
-      // Stash preview URLs onto tracks that have them.
-      songs = songs.map((st) {
-        final key =
-            RecommendationEngine.normalizeKey(st.track.artist, st.track.title);
-        final preview = previewByKey[key];
-        if (preview != null &&
-            st.track.previewUrl == null) {
-          return ScoredTrack(
-            track: Track(
-              title: st.track.title,
-              artist: st.track.artist,
-              album: st.track.album,
-              imageUrl: st.track.imageUrl,
-              durationMs: st.track.durationMs,
-              platformTrackId: st.track.platformTrackId,
-              previewUrl: preview,
-            ),
-            score: st.score,
-            reasons: st.reasons,
-          );
-        }
-        return st;
-      }).toList();
 
       // 5. Album enrichment (FR-11): track.getSimilar carries no album
       // data, so without this the Albums tab would always be empty.
@@ -1195,7 +1181,7 @@ class PlaybackState {
 
   final bool isPlaying;
 
-  /// True while a preview URL is being resolved for a tap.
+  /// True while a full song is being resolved for a tap.
   final bool isResolving;
 
   /// Normalized key of the track being resolved, if any. Only
@@ -1279,48 +1265,61 @@ class PlaybackState {
 }
 
 /// Manages playback for recommended tracks — one shared player across
-/// the app; only one track plays at a time. Resolves missing preview
-/// URLs on demand via iTunes search. The queue is the list a track was
-/// played from (results, playlist, album, Discover tab), so the
-/// mini-player's next/previous buttons work across screens.
+/// the app; only one track plays at a time. Resolves each track to a
+/// FULL song through [FullSongResolver] (no previews anywhere). The
+/// queue is the list a track was played from (results, playlist,
+/// album, Discover tab), so the mini-player's next/previous buttons
+/// work across screens.
 class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   AudioBackend? _backend;
-  final FallbackSources _fallbacks;
-  final AudiusClient? _audiusClient;
+
+  /// Full-song resolver (injected in tests; built from the fallbacks
+  /// + Audius client when omitted, so a bare notifier still resolves
+  /// through Deezer/iTunes links + Audius).
+  final FullSongResolver _resolver;
+
+  /// Outbound-link opener (openLinkInAppFirst by default; injected
+  /// in tests so no real app is launched).
+  final Future<bool> Function(Uri uri) _openExternal;
   StreamSubscription<PlayerState>? _stateSub;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration>? _durationSub;
   /// Monotonic token: a resolve superseded by a newer tap is dropped
   /// instead of overwriting the newer track's state.
   int _playToken = 0;
-  /// Cache of resolved preview URLs keyed by normalized track key.
-  final Map<String, String> _previewCache = {};
-  /// How each cached URL was resolved: 'preview' for a 30-second
-  /// iTunes/Deezer preview, 'audius' for a full Audius stream, 'full'
-  /// for a full stream handed to playStream (e.g. Jamendo radio).
-  /// The button uses this to label a full track honestly, never as a
-  /// preview. Jamendo is deliberately NOT a step here: it requires a
-  /// user-supplied client_id, and no shared key is shipped in the app.
-  final Map<String, String> _previewSource = {};
+  /// How each resolved track was sourced: 'ownStream' for a track's
+  /// own stream, 'audius' / 'jamendo' for full in-app streams,
+  /// 'youtube' / 'deezer' / 'itunes' for outbound links,
+  /// 'spotify-corrected' for a match found via the Spotify metadata
+  /// re-resolve, 'full' for a full stream handed to playStream
+  /// (e.g. Jamendo radio). The button uses this to label a full
+  /// track honestly. Jamendo is only a resolver step when the user
+  /// set a client_id (see [audioPlayerProvider]).
+  final Map<String, String> _streamSource = {};
 
-  AudioPlayerNotifier(this._fallbacks,
-      {AudioBackend? backend, AudiusClient? audiusClient})
+  AudioPlayerNotifier(FallbackSources fallbacks,
+      {AudioBackend? backend,
+      AudiusClient? audiusClient,
+      FullSongResolver? resolver,
+      Future<bool> Function(Uri)? openExternal})
       : _backend = backend,
-        _audiusClient = audiusClient,
+        _resolver = resolver ??
+            FullSongResolver(fallbacks: fallbacks, audius: audiusClient),
+        _openExternal = openExternal ?? openLinkInAppFirst,
         super(PlaybackState.idle);
 
   /// The real backend, created lazily on first actual playback so that
-  /// constructing the notifier — and resolving a preview, which is pure
-  /// Dart plus the preview cache — never touches the audio platform.
+  /// constructing the notifier — and resolving a track, which is pure
+  /// Dart plus the resolver cache — never touches the audio platform.
   /// (audioplayers' AudioPlayer constructor calls _create() on the
   /// platform, which has no registered plugin in a flutter_test
   /// environment; the old eager construction is what made the
-  /// no-network resolvePreview test fail on CI.)
+  /// no-network resolve test fail on CI.)
   AudioBackend get _audio => _backend ??= AudioplayersBackend();
 
   /// Subscribe to backend events lazily, only when audio actually
-  /// plays, so constructing the notifier (and resolving a preview that
-  /// turns out not to exist) never touches platform channels.
+  /// plays, so constructing the notifier (and resolving a track that
+  /// turns out to have no full song) never touches platform channels.
   void _ensureSubs() {
     if (_stateSub != null) return;
     _stateSub = _audio.onPlayerStateChanged.listen((playerState) {
@@ -1343,8 +1342,8 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   }
 
   /// Normalized key for a track, using the same function generation
-  /// uses to look preview URLs up, so keys built anywhere in the
-  /// fallback layer match the keys used here.
+  /// and the fallback layer use, so keys built anywhere match the
+  /// keys used here.
   String _key(Track track) =>
       RecommendationEngine.normalizeKey(track.artist, track.title);
 
@@ -1357,24 +1356,40 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   /// Normalized key of the currently playing track, null otherwise.
   String? get playingKey => state.isPlaying ? state.currentKey : null;
 
-  /// Normalized key of the track whose preview is being resolved, if
+  /// Normalized key of the track whose full song is being resolved, if
   /// any. Only meaningful while [PlaybackState.isResolving] is true.
   String? get resolvingKey => state.resolvingKey;
 
   /// Resolution source for [track] once it has been resolved:
-  /// 'preview' (30-second iTunes/Deezer sample), 'audius' (full
-  /// Audius stream) or 'full' (full stream handed to playStream).
-  /// Null before any resolution.
-  String? previewSourceFor(Track track) => _previewSource[_key(track)];
+  /// 'ownStream' (the track's own stream), 'audius' / 'jamendo'
+  /// (full in-app stream), 'youtube' / 'deezer' / 'itunes' (outbound
+  /// link), 'spotify-corrected' (match found via the Spotify metadata
+  /// re-resolve) or 'full' (full stream handed to playStream).
+  /// Null before any resolution. Every resolution is a full track —
+  /// there are no previews anymore.
+  String? streamSourceFor(Track track) => _streamSource[_key(track)];
 
   /// Human-readable reason for a playback failure, for the SnackBar.
-  /// [noPreview] is the "nothing playable exists" case; anything else
-  /// is a load/play error from the backend. Network-looking failures
-  /// say so; anything else stays a plain "couldn't play" instead of
-  /// leaking a long platform message into the UI.
+  /// A [failure] distinguishes the cases the resolver reports: no
+  /// full stream anywhere, a source that could not be reached, or a
+  /// track that only exists on Spotify (whose audio cannot play
+  /// in-app). Without a [failure], [error] is a load/play error from
+  /// the backend: network-looking failures say so; anything else
+  /// stays a plain "couldn't play" instead of leaking a long platform
+  /// message into the UI.
   static String playbackErrorMessage(Object error,
-      {bool noPreview = false}) {
-    if (noPreview) return 'No preview found for this track';
+      {FullSongFailure? failure, String? networkSource}) {
+    switch (failure) {
+      case FullSongFailure.noStream:
+        return 'No full stream found for this track';
+      case FullSongFailure.network:
+        final source = networkSource ?? 'a source';
+        return "Couldn't reach $source — check your connection";
+      case FullSongFailure.spotifyAudioUnavailable:
+        return "Spotify audio can't play in-app";
+      case null:
+        break;
+    }
     final detail = error is AudioPlayerException
         ? (error.cause?.toString() ?? error.toString())
         : error.toString();
@@ -1411,83 +1426,7 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
     );
   }
 
-  /// Resolve a preview URL for [track] from cache, the track itself, or
-  /// the on-demand chain, in order: iTunes artist+title, Deezer
-  /// artist+title, iTunes title-only (strict title match), Deezer
-  /// title-only (strict title match), then an Audius title search as
-  /// a last resort (full track, labelled via [_previewSource]).
-  /// Public so the on-demand path is testable without driving audio
-  /// playback.
-  Future<String?> resolvePreview(Track track) async {
-    final key = _key(track);
-    // Already cached.
-    final cached = _previewCache[key];
-    if (cached != null) return cached;
-    // Already on the track: a 30-second preview.
-    if (track.previewUrl != null && track.previewUrl!.isNotEmpty) {
-      _previewCache[key] = track.previewUrl!;
-      _previewSource[key] = 'preview';
-      return track.previewUrl;
-    }
-    // The track's own full stream (e.g. an Audius-imported track):
-    // playable, but a full track, not a preview.
-    if (track.streamUrl != null && track.streamUrl!.isNotEmpty) {
-      _previewCache[key] = track.streamUrl!;
-      _previewSource[key] = 'audius';
-      return track.streamUrl;
-    }
-    // On-demand 30-second preview chain. Each step swallows its own
-    // failures (see FallbackSources), so a dead source never blocks
-    // the later ones.
-    String? preview;
-    preview ??= await _fallbacks.itunesTrackPreview(
-      track.artist, track.title,
-    );
-    preview ??= await _fallbacks.deezerTrackPreview(
-      track.artist, track.title,
-    );
-    preview ??= await _fallbacks.itunesTrackPreviewTitleOnly(
-      track.artist, track.title,
-    );
-    preview ??= await _fallbacks.deezerTrackPreviewTitleOnly(
-      track.artist, track.title,
-    );
-    if (preview != null) {
-      _previewCache[key] = preview;
-      _previewSource[key] = 'preview';
-      return preview;
-    }
-    // Last resort: an Audius title search. Full track, not a preview;
-    // the caller labels it via [previewSourceFor]. The artist string
-    // is deliberately NOT required to match here — it is exactly the
-    // polluted-artist case (channel names, 'Unknown artist') that
-    // this chain exists for — but the title must match cleanly.
-    final audius = _audiusClient;
-    if (audius != null) {
-      try {
-        final query = RecommendationEngine.cleanTrackTitle(track.title);
-        final results = await audius.searchTracks(query, limit: 5);
-        for (final result in results) {
-          if (result.streamUrl == null || result.streamUrl!.isEmpty) {
-            continue;
-          }
-          if (RecommendationEngine.cleanTrackTitle(result.title)
-                  .toLowerCase()
-                  .trim() ==
-              query.toLowerCase().trim()) {
-            _previewCache[key] = result.streamUrl!;
-            _previewSource[key] = 'audius';
-            return result.streamUrl;
-          }
-        }
-      } catch (_) {
-        // Audius is a last resort: its failure is just "no preview".
-      }
-    }
-    return null;
-  }
-
-  /// Play [track], resolving its preview URL first. Tapping the
+  /// Play [track], resolving it to a full song first. Tapping the
   /// playing track pauses it; tapping the paused track resumes it.
   /// [queue] is the list the track was played from (results,
   /// playlist, album, Discover tab) — it becomes the next/previous
@@ -1506,46 +1445,94 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
     final newQueue = queue ?? _queueFor(track);
     final index = _indexOfKey(newQueue, key);
     final token = ++_playToken;
-    // Resolve first (resolving state), so a tap on a preview-less
-    // track actually runs the on-demand lookup instead of doing
-    // nothing. A track already playing keeps playing meanwhile.
+    // Resolve first (resolving state), so a tap on a track with no
+    // full song actually runs the lookup instead of doing nothing.
+    // A track already playing keeps playing meanwhile.
     state = current.copyWith(isResolving: true, resolvingKey: key);
-    final preview = await resolvePreview(track);
-    // A newer tap superseded this resolve; its own state update wins.
-    if (token != _playToken) return;
-    if (preview == null || preview.isEmpty) {
-      // No preview anywhere: report why, and restore the previous
-      // playing state (still playing another track, or stopped)
-      // instead of leaving a stale resolving state behind.
-      state = current.copyWith(
-        lastError: playbackErrorMessage('', noPreview: true),
-        errorSeq: current.errorSeq + 1,
-      );
-      return;
-    }
-    await _playResolved(
+    final failure = await _resolveAndPlay(
       track: track,
-      url: preview,
       queue: newQueue,
       index: index < 0 ? 0 : index,
       token: token,
     );
+    // A newer tap superseded this resolve; its own state update wins.
+    if (token != _playToken) return;
+    if (failure != null) {
+      // No full song anywhere: report why, and restore the previous
+      // playing state (still playing another track, or stopped)
+      // instead of leaving a stale resolving state behind.
+      state = current.copyWith(
+        lastError: failure,
+        errorSeq: current.errorSeq + 1,
+      );
+      return;
+    }
   }
 
-  /// Play an already-resolved full-stream URL (a full-song race
-  /// winner, a Discover stream, a Jamendo radio), bypassing the
-  /// toggle in [play]: a preview for the same track key that is
-  /// already playing must not swallow the full song as a "pause".
-  /// Records the URL/source in the preview cache so the shared
-  /// buttons show the playing state honestly.
+  /// Resolve [track] through the full-song resolver and play it
+  /// in-app, or open its external match (YouTube / Deezer / iTunes
+  /// link) in that app. Returns the failure message to report, or
+  /// null when the track is playing in-app or was opened externally.
+  /// Never touches state on the failure path (the caller owns the
+  /// error state); on the success paths it checks [token] first, so
+  /// a superseded resolve cannot overwrite a newer tap's state.
+  Future<String?> _resolveAndPlay({
+    required Track track,
+    required List<Track> queue,
+    required int index,
+    required int token,
+  }) async {
+    final result = await _resolver.resolve(track);
+    if (token != _playToken) return null;
+    final match = result.match;
+    if (match == null) {
+      return playbackErrorMessage(
+        '',
+        failure: result.failure,
+        networkSource: result.networkSource,
+      );
+    }
+    _streamSource[_key(track)] = match.sourceLabel;
+    if (match.playInApp) {
+      await _playResolved(
+        track: track,
+        url: match.streamUrl!,
+        queue: queue,
+        index: index,
+        token: token,
+      );
+      return null;
+    }
+    final opened = await _openExternal(Uri.parse(match.externalUrl!));
+    if (token != _playToken) return null;
+    if (!opened) return "Couldn't open the ${match.label} link";
+    // The song plays in the other app: the track stays loaded
+    // (paused) in-app so the mini-player shows what is playing
+    // elsewhere instead of going blank.
+    state = state.copyWith(
+      currentTrack: track,
+      queue: queue,
+      queueIndex: index,
+      isPlaying: false,
+      isResolving: false,
+      clearResolvingKey: true,
+      clearLastError: true,
+    );
+    return null;
+  }
+
+  /// Play an already-resolved full-stream URL (a full-song match, a
+  /// Discover stream, a Jamendo radio), bypassing the toggle in
+  /// [play]: a full stream for the same track key that is already
+  /// playing must not swallow the new one as a "pause". Records the
+  /// source so the shared buttons show the playing state honestly.
   Future<void> playStream(Track track, String url,
       {String source = 'audius', List<Track>? queue}) async {
     final key = _key(track);
     final newQueue = queue ?? _queueFor(track);
     final index = _indexOfKey(newQueue, key);
     final token = ++_playToken;
-    _previewCache[key] = url;
-    _previewSource[key] = source;
+    _streamSource[key] = source;
     await _playResolved(
       track: track,
       url: url,
@@ -1571,27 +1558,25 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
       isResolving: true,
       resolvingKey: _key(track),
     );
-    final preview = await resolvePreview(track);
+    final failure = await _resolveAndPlay(
+      track: track,
+      queue: queue,
+      index: index,
+      token: token,
+    );
     if (token != _playToken) return;
-    if (preview == null || preview.isEmpty) {
+    if (failure != null) {
       // Unplayable queue entry: report why and stop on the failed
       // track (paused) instead of spinning on the next one.
       state = state.copyWith(
         isPlaying: false,
         isResolving: false,
         clearResolvingKey: true,
-        lastError: playbackErrorMessage('', noPreview: true),
+        lastError: failure,
         errorSeq: state.errorSeq + 1,
       );
       return;
     }
-    await _playResolved(
-      track: track,
-      url: preview,
-      queue: queue,
-      index: index,
-      token: token,
-    );
   }
 
   /// Stop the backend and start [url] for [track]; on a load failure
@@ -1714,19 +1699,41 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   }
 }
 
-/// Shared audio player provider for preview playback.
+/// Shared audio player provider for full-song playback.
 final audioPlayerProvider =
     StateNotifierProvider<AudioPlayerNotifier, PlaybackState>(
-  // Audius is constructed here with a plain Dio (same timeouts as the
-  // Discover tab's Dio) rather than watched from discover_provider, so
-  // generation does not depend on the Discover provider file. It is
-  // only a last-resort lookup in resolvePreview; Discover playback is
-  // unaffected.
-  (ref) => AudioPlayerNotifier(
-    ref.watch(fallbackSourcesProvider),
-    audiusClient: AudiusClient(Dio(BaseOptions(
+  // Audius / YouTube / Spotify are constructed here with plain Dios
+  // (same timeouts as the Discover tab's Dio) rather than watched
+  // from discover_provider, so generation does not depend on the
+  // Discover provider file. Discover playback is unaffected.
+  // Jamendo joins only when the user set a client_id (see
+  // lib/core/constants.dart); Spotify search uses the signed-in
+  // session (sp_dc) and degrades to "not signed in" when absent.
+  (ref) {
+    final dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 15),
-    ))),
-  ),
+    ));
+    final fallbacks = ref.watch(fallbackSourcesProvider);
+    final audius = AudiusClient(dio);
+    final spotify = SpotifyInternalClient(ref.watch(dioProvider),
+        SpotifySession());
+    final resolver = FullSongResolver(
+      fallbacks: fallbacks,
+      audius: audius,
+      jamendo: jamendoClientId.isNotEmpty &&
+              jamendoClientId != 'YOUR_JAMENDO_CLIENT_ID'
+          ? JamendoClient(dio, clientId: jamendoClientId)
+          : null,
+      youtube: YouTubeVideoResolver(dio),
+      visionOs: VisionOsPlayerClient(dio),
+      spotifySearch: (query) => spotify.searchTracks(query),
+      log: ref.read(resolutionLogProvider.notifier).log,
+    );
+    return AudioPlayerNotifier(
+      fallbacks,
+      audiusClient: audius,
+      resolver: resolver,
+    );
+  },
 );

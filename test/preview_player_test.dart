@@ -1,87 +1,85 @@
-// Tests for the Phase 1 preview fix (see
+// Tests for the full-song play path (see
 // lib/presentation/providers/generation_provider.dart and
-// lib/data/fallback/fallback_sources.dart):
-// - on-demand iTunes lookup via AudioPlayerNotifier.resolvePreview,
-//   including the cache (one network call, not one per tap);
-// - playing-state observability: isResolving while resolving, idle state
-//   when no preview exists, resolvingKey naming the resolving track, and
-//   the no-preview reason recorded in lastError for the SnackBar;
-// - preview-key normalisation consistency between the fallback layer
-//   (which builds the keys) and generation/player lookup (which reads
-//   them via RecommendationEngine.normalizeKey).
-// No live API is called: iTunes responses are canned via a Dio adapter.
-// These tests never play audio, so no platform audio channel is touched
-// (the completion subscription is installed lazily on first real play).
+// lib/data/fullsong/full_song_resolver.dart):
+// - play() resolves through the full-song resolver: a track carrying
+//   its own streamUrl plays without any network call; a track with
+//   no full song anywhere records the distinguished failure reason
+//   for the SnackBar;
+// - playing-state observability: isResolving while resolving, idle
+//   state when no full song exists, resolvingKey naming the resolving
+//   track;
+// - failure reasons distinguish no-stream vs network vs
+//   Spotify-audio-unavailable (see playbackErrorMessage).
+// No live API is called: iTunes/Deezer responses are canned via a Dio
+// adapter, and Spotify search is a canned callback on an injected
+// resolver. Playback goes through a fake AudioBackend, so no platform
+// audio channel is touched.
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:music_man/data/engine/recommendation_engine.dart';
 import 'package:music_man/data/fallback/fallback_sources.dart';
+import 'package:music_man/data/fullsong/full_song_resolver.dart';
 import 'package:music_man/data/models/music_models.dart';
 import 'package:music_man/presentation/providers/generation_provider.dart';
 
+import 'fake_audio_backend.dart';
+
+/// Answers empty iTunes/Deezer results for every request, so the
+/// link lookups find nothing (no live network).
+class _EmptyAdapter implements HttpClientAdapter {
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    await requestStream?.drain<void>();
+    return ResponseBody.fromString(
+      jsonEncode({'results': [], 'data': []}),
+      200,
+      headers: {Headers.contentTypeHeader: ['application/json']},
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+Dio _emptyDio() {
+  final dio = Dio();
+  dio.httpClientAdapter = _EmptyAdapter();
+  return dio;
+}
+
 void main() {
-  group('resolvePreview (on-demand iTunes lookup)', () {
-    test('returns the track previewUrl without any network call', () async {
-      final notifier = AudioPlayerNotifier(FallbackSources());
+  group('play() resolves to a full song', () {
+    test('a track with its own streamUrl plays without any network call',
+        () async {
+      final backend = FakeAudioBackend();
+      final notifier =
+          AudioPlayerNotifier(FallbackSources(), backend: backend);
       const track = Track(
         artist: 'Singer',
         title: 'Song',
-        previewUrl: 'https://example.com/known.m4a',
+        streamUrl: 'https://example.com/full.mp3',
       );
-      expect(await notifier.resolvePreview(track),
-          'https://example.com/known.m4a');
+      await notifier.play(track);
+      expect(backend.playedUrls, ['https://example.com/full.mp3']);
+      expect(notifier.state.isPlaying, isTrue);
+      expect(notifier.streamSourceFor(track), 'ownStream');
     });
 
-    test('looks a preview up on iTunes, then serves it from cache',
-        () async {
-      var calls = 0;
-      final dio = Dio();
-      dio.httpClientAdapter = _CannedAdapter((options) async {
-        calls++;
-        final term = options.queryParameters['term'] as String? ?? '';
-        if (term.contains('Known')) {
-          return {
-            'results': [
-              {
-                'artistName': 'Known Artist',
-                'trackName': 'Known Song',
-                'previewUrl': 'https://example.com/known.m4a',
-              }
-            ]
-          };
-        }
-        return {'results': []};
-      });
-      final notifier = AudioPlayerNotifier(FallbackSources(dio));
-      const track = Track(artist: 'Known Artist', title: 'Known Song');
-      expect(await notifier.resolvePreview(track),
-          'https://example.com/known.m4a');
-      expect(await notifier.resolvePreview(track),
-          'https://example.com/known.m4a');
-      expect(calls, 1);
-    });
-
-    test('returns null cleanly for an unknown track', () async {
-      final dio = Dio();
-      dio.httpClientAdapter =
-          _CannedAdapter((_) async => {'results': []});
-      final notifier = AudioPlayerNotifier(FallbackSources(dio));
-      const track = Track(artist: 'Nobody', title: 'No Such Song');
-      expect(await notifier.resolvePreview(track), isNull);
-    });
-  });
-
-  group('playing-state observability', () {
-    test('play() shows loading while resolving, then data(null) '
-        'when no preview exists', () async {
+    test('play() shows loading while resolving, then the no-stream '
+        'reason when nothing is found', () async {
       final gate = Completer<Map<String, dynamic>>();
       final dio = Dio();
-      dio.httpClientAdapter = _CannedAdapter((_) => gate.future);
+      dio.httpClientAdapter = _GatedAdapter(gate.future);
       final notifier = AudioPlayerNotifier(FallbackSources(dio));
       const track = Track(artist: 'Nobody', title: 'No Such Song');
       final key =
@@ -93,16 +91,125 @@ void main() {
       expect(notifier.resolvingKey, key);
       expect(notifier.playingKey, isNull);
 
-      gate.complete({'results': []});
+      gate.complete({'results': [], 'data': []});
       await playFuture;
-      // No preview anywhere: back to stopped, no stale resolving state,
-      // and the reason is recorded for the SnackBar.
+      // No full song anywhere: back to stopped, no stale resolving
+      // state, and the reason is recorded for the SnackBar.
       expect(notifier.state.isResolving, isFalse);
       expect(notifier.state.currentTrack, isNull);
       expect(notifier.state.resolvingKey, isNull);
       expect(notifier.playingKey, isNull);
-      expect(notifier.state.lastError, 'No preview found for this track');
+      expect(notifier.state.lastError, 'No full stream found for this track');
       expect(notifier.state.errorSeq, 1);
+    });
+
+    test('a network failure names the unreachable source', () async {
+      final dio = _emptyDio();
+      final resolver = FullSongResolver(
+        fallbacks: FallbackSources(dio),
+        spotifySearch: (_) async =>
+            throw const SocketException('Failed host lookup'),
+      );
+      final notifier = AudioPlayerNotifier(
+        FallbackSources(dio),
+        resolver: resolver,
+      );
+      const track = Track(artist: 'Nobody', title: 'No Such Song');
+      await notifier.play(track);
+      expect(notifier.state.lastError,
+          "Couldn't reach spotify — check your connection");
+      expect(notifier.state.errorSeq, 1);
+    });
+
+    test('Spotify found the track but nothing can play it', () async {
+      final dio = _emptyDio();
+      final resolver = FullSongResolver(
+        fallbacks: FallbackSources(dio),
+        spotifySearch: (_) async => [
+          const Track(artist: 'Nobody', title: 'No Such Song'),
+        ],
+      );
+      final notifier = AudioPlayerNotifier(
+        FallbackSources(dio),
+        resolver: resolver,
+      );
+      const track = Track(artist: 'Nobody', title: 'No Such Song');
+      await notifier.play(track);
+      expect(
+          notifier.state.lastError, "Spotify audio can't play in-app");
+      expect(notifier.state.errorSeq, 1);
+    });
+
+    test('an external match opens the link instead of playing in-app',
+        () async {
+      final dio = Dio();
+      dio.httpClientAdapter = _GatedAdapter(Future.value({
+        'results': [
+          {
+            'artistName': 'Singer',
+            'trackName': 'Song',
+            'trackViewUrl': 'https://music.apple.com/song/1',
+          },
+        ],
+        'data': [],
+      }));
+      final opened = <Uri>[];
+      final notifier = AudioPlayerNotifier(
+        FallbackSources(dio),
+        openExternal: (uri) async {
+          opened.add(uri);
+          return true;
+        },
+      );
+      const track = Track(artist: 'Singer', title: 'Song');
+      await notifier.play(track);
+      expect(opened, [Uri.parse('https://music.apple.com/song/1')]);
+      // The track stays loaded (paused) so the mini-player shows
+      // what is playing in the other app.
+      expect(notifier.state.currentTrack, track);
+      expect(notifier.state.isPlaying, isFalse);
+      expect(notifier.streamSourceFor(track), 'itunes');
+    });
+  });
+
+  group('playbackErrorMessage maps the cases directly', () {
+    test('no-stream, network, and Spotify-audio cases', () {
+      expect(
+        AudioPlayerNotifier.playbackErrorMessage(
+          '',
+          failure: FullSongFailure.noStream,
+        ),
+        'No full stream found for this track',
+      );
+      expect(
+        AudioPlayerNotifier.playbackErrorMessage(
+          '',
+          failure: FullSongFailure.network,
+          networkSource: 'audius',
+        ),
+        "Couldn't reach audius — check your connection",
+      );
+      expect(
+        AudioPlayerNotifier.playbackErrorMessage(
+          '',
+          failure: FullSongFailure.spotifyAudioUnavailable,
+        ),
+        "Spotify audio can't play in-app",
+      );
+      expect(
+        AudioPlayerNotifier.playbackErrorMessage(
+            Exception('SocketException: Failed host lookup')),
+        "Couldn't load audio — check your connection",
+      );
+      expect(
+        AudioPlayerNotifier.playbackErrorMessage(
+            Exception('Connection timed out')),
+        "Couldn't load audio — check your connection",
+      );
+      expect(
+        AudioPlayerNotifier.playbackErrorMessage(Exception('boom')),
+        "Couldn't play this track",
+      );
     });
   });
 
@@ -128,18 +235,39 @@ void main() {
           RecommendationEngine.normalizeKey('Singer', 'Hit Song (Remastered)');
       expect(result.previews.keys.single, expected);
       expect(result.previews[expected], 'https://example.com/hit.m4a');
-      expect(
-          result.previews[
-              RecommendationEngine.normalizeKey('Singer', 'Hit Song')],
-          'https://example.com/hit.m4a');
     });
   });
 }
 
-/// Answers iTunes-shaped JSON from [respond] for every request.
+/// Answers every request with one gated future's payload, so a test
+/// can observe the resolving window and then decide the outcome.
+class _GatedAdapter implements HttpClientAdapter {
+  final Future<Map<String, dynamic>> _gated;
+  _GatedAdapter(this._gated);
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    await requestStream?.drain<void>();
+    final body = await _gated;
+    return ResponseBody.fromString(
+      jsonEncode(body),
+      200,
+      headers: {Headers.contentTypeHeader: ['application/json']},
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+/// Answers every request by calling [answer] with the options.
 class _CannedAdapter implements HttpClientAdapter {
-  final Future<Map<String, dynamic>> Function(RequestOptions) respond;
-  _CannedAdapter(this.respond);
+  final Future<Map<String, dynamic>> Function(RequestOptions options) answer;
+  _CannedAdapter(this.answer);
 
   @override
   Future<ResponseBody> fetch(
@@ -149,11 +277,9 @@ class _CannedAdapter implements HttpClientAdapter {
   ) async {
     await requestStream?.drain<void>();
     return ResponseBody.fromString(
-      jsonEncode(await respond(options)),
+      jsonEncode(await answer(options)),
       200,
-      headers: {
-        Headers.contentTypeHeader: ['application/json'],
-      },
+      headers: {Headers.contentTypeHeader: ['application/json']},
     );
   }
 
