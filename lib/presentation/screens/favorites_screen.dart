@@ -1,18 +1,36 @@
-// Favorites (S-07, FR-12/12b/12c): Daily picks on top, hearted items grouped
-// Songs/Albums, multi-select mode via the selection icon, swipe-to-remove.
+// Favorites (S-07, FR-12/12b/12c): "Today's picks" editorial block
+// on top with a refresh action, then hearted items grouped into
+// Songs and Albums with counts, multi-select mode with a bottom
+// action bar, swipe-to-remove. Tap a song plays it (EditorialSongRow
+// with the double-tap window); overflow opens it elsewhere. No swipe
+// quick actions here (that is Phase C).
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/appearance.dart';
+import '../../core/theme.dart';
 import '../../data/engine/recommendation_engine.dart';
 import '../../data/models/music_models.dart';
 import '../providers/daily_picks_provider.dart';
 import '../providers/providers.dart';
+import '../widgets/editorial_route.dart';
+import '../widgets/editorial_widgets.dart';
 import '../widgets/outbound_sheet.dart';
+import '../widgets/song_row.dart';
 import '../widgets/youtube_export_sheet.dart';
 import 'album_detail_screen.dart';
 import 'artist_events_screen.dart';
+
+bool _isComplex(BuildContext context) =>
+    Theme.of(context).extension<MusicManDesignTokens>()?.design ==
+    AppDesign.complex;
+
+String _formatDuration(int ms) {
+  final total = Duration(milliseconds: ms).inSeconds;
+  return '${total ~/ 60}:${(total % 60).toString().padLeft(2, '0')}';
+}
 
 class FavoritesScreen extends ConsumerStatefulWidget {
   const FavoritesScreen({super.key});
@@ -53,10 +71,15 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     }
   }
 
+  void _goHome() {
+    ref.read(tabIndexProvider.notifier).state = 0;
+  }
+
   @override
   Widget build(BuildContext context) {
     final tracks = ref.watch(favoriteTracksProvider);
     final albums = ref.watch(favoriteAlbumsProvider);
+    final scheme = Theme.of(context).colorScheme;
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -67,8 +90,9 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
               icon: const Icon(Icons.event_outlined),
               tooltip: 'Upcoming events',
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => ArtistEventsScreen(
+                editorialRoute(
+                  context,
+                  (_) => ArtistEventsScreen(
                     artists: ref
                         .read(favoritesRepositoryProvider)
                         .favoritedArtists(),
@@ -83,8 +107,11 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                 onPressed: _toggleSelectMode,
               ),
           ],
-          bottom: const TabBar(
-            tabs: [Tab(text: 'Songs'), Tab(text: 'Albums')],
+          bottom: TabBar(
+            tabs: [
+              Tab(text: 'Songs (${tracks.length})'),
+              Tab(text: 'Albums (${albums.length})'),
+            ],
           ),
         ),
         body: Column(
@@ -103,9 +130,14 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         ),
         bottomNavigationBar: _selectMode && _selected.isNotEmpty
             ? SafeArea(
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: scheme.surface,
+                    border: Border(
+                        top: BorderSide(color: scheme.outline)),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 8),
                   child: Row(
                     children: [
                       Expanded(
@@ -130,8 +162,18 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
 
   // -- Daily picks (FR-12b) ---------------------------------------------------
 
+  bool _hasPicks(AsyncValue<DailyPicks?> picks) => picks.maybeWhen(
+        data: (p) =>
+            p != null && (p.songs.isNotEmpty || p.albums.isNotEmpty),
+        orElse: () => false,
+      );
+
   Widget _dailyPicksSection() {
     final picks = ref.watch(dailyPicksProvider);
+    final isComplex = _isComplex(context);
+    final artWidth = isComplex ? 128.0 : 104.0;
+    final artHeight = isComplex ? 112.0 : 88.0;
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -139,9 +181,22 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
           child: Row(
             children: [
-              Text('Daily picks',
-                  style: Theme.of(context).textTheme.titleSmall),
-              const Spacer(),
+              Expanded(
+                child: Row(
+                  children: [
+                    Text("Today's picks",
+                        style: theme.textTheme.titleLarge),
+                    const SizedBox(width: 8),
+                    Text(
+                      'お気に入り',
+                      style: AppTheme.stampKanjiStyle(
+                        color: theme.colorScheme.primary,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.refresh, size: 20),
                 tooltip: 'Regenerate picks',
@@ -152,26 +207,29 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
           ),
         ),
         SizedBox(
-          height: 132,
+          // The horizontal list is short; the loading, error, and
+          // empty states carry a message plus a button, so they get
+          // the taller slot instead of overflowing the list height.
+          height: _hasPicks(picks)
+              ? (isComplex ? 168 : 140)
+              : 184,
           child: picks.when(
-            loading: () =>
-                const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Center(
-              child: TextButton(
-                onPressed: () =>
-                    ref.read(dailyPicksProvider.notifier).refresh(),
-                child: const Text('Couldn\'t load picks — retry'),
-              ),
+            loading: () => const EditorialLoadingState(
+                message: "Loading today's picks"),
+            error: (e, _) => EditorialErrorState(
+              message: "Couldn't load today's picks. "
+                  'Check your connection and try again.',
+              onRetry: () =>
+                  ref.read(dailyPicksProvider.notifier).refresh(),
             ),
             data: (p) {
               if (p == null) {
-                return const Center(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 32),
-                    child: Text(
-                      'Heart some songs to get daily picks.',
-                      textAlign: TextAlign.center,
-                    ),
+                return Center(
+                  child: EditorialEmptyState(
+                    message: 'No picks yet. Heart some songs and fresh '
+                        'picks will appear here.',
+                    actionLabel: 'Browse home',
+                    onAction: _goHome,
                   ),
                 );
               }
@@ -180,7 +238,14 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                 for (final a in p.albums) _PickItem.album(a),
               ];
               if (items.isEmpty) {
-                return const Center(child: Text('No picks today.'));
+                return Center(
+                  child: EditorialEmptyState(
+                    message: 'No picks today. Heart some songs and '
+                        'fresh picks will appear here.',
+                    actionLabel: 'Browse home',
+                    onAction: _goHome,
+                  ),
+                );
               }
               return ListView.separated(
                 scrollDirection: Axis.horizontal,
@@ -190,31 +255,27 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                 itemBuilder: (_, i) {
                   final item = items[i];
                   return InkWell(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(2),
                     onTap: () => item.song != null
                         ? showOutboundSheet(context, item.song!.track)
-                        : Navigator.of(context).push(MaterialPageRoute(
-                            builder: (_) =>
+                        : Navigator.of(context).push(editorialRoute(
+                            context,
+                            (_) =>
                                 AlbumDetailScreen(album: item.album!))),
                     child: SizedBox(
-                      width: 104,
+                      width: artWidth,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _pickArt(item),
+                          _pickArt(item, artWidth, artHeight),
                           const SizedBox(height: 4),
                           Text(item.title,
-                              style: Theme.of(context).textTheme.bodySmall,
+                              style: theme.textTheme.bodySmall,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis),
                           Text(item.artist,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant),
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis),
                         ],
@@ -231,23 +292,23 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     );
   }
 
-  Widget _pickArt(_PickItem item) {
+  Widget _pickArt(_PickItem item, double width, double height) {
     final url = item.artUrl;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(2),
       child: url != null && url.isNotEmpty
           ? CachedNetworkImage(
               imageUrl: url,
-              width: 104,
-              height: 88,
+              width: width,
+              height: height,
               fit: BoxFit.cover,
               errorWidget: (_, __, ___) =>
                   const Icon(Icons.music_note_outlined, size: 40),
             )
           : Container(
-              width: 104,
-              height: 88,
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              width: width,
+              height: height,
+              color: Theme.of(context).colorScheme.surface,
               child: const Icon(Icons.music_note_outlined, size: 40),
             ),
     );
@@ -257,9 +318,16 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
 
   Widget _songsTab(List<Track> tracks) {
     if (tracks.isEmpty) {
-      return _emptyState(Icons.favorite_outline,
-          'No favorite songs yet.\nTap the heart on any recommendation.');
+      return Center(
+        child: EditorialEmptyState(
+          message: 'No favorite songs yet. '
+              'Tap the heart on any recommendation.',
+          actionLabel: 'Browse home',
+          onAction: _goHome,
+        ),
+      );
     }
+    final isComplex = _isComplex(context);
     return Column(
       children: [
         Padding(
@@ -275,65 +343,56 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         ),
         Expanded(
           child: ListView.builder(
-      itemCount: tracks.length,
-      itemBuilder: (_, i) {
-        final t = tracks[i];
-        final k = _key(t.artist, t.title);
-        final selected = _selected.contains(k);
-        return Dismissible(
-          key: ValueKey('fav-song-$k'),
-          direction: _selectMode
-              ? DismissDirection.none
-              : DismissDirection.endToStart,
-          background: Container(
-            color: Theme.of(context).colorScheme.errorContainer,
-            alignment: Alignment.centerRight,
-            padding: const EdgeInsets.only(right: 20),
-            child: const Icon(Icons.delete_outline),
-          ),
-          onDismissed: (_) {
-            ref.read(favoritesRepositoryProvider).remove(t.artist, t.title);
-            ref.read(favoritesVersionProvider.notifier).state++;
-          },
-          child: ListTile(
-            leading: _selectMode
-                ? Checkbox(
-                    value: selected,
-                    onChanged: (_) => setState(() => selected
-                        ? _selected.remove(k)
-                        : _selected.add(k)),
-                  )
-                : t.imageUrl != null && t.imageUrl!.isNotEmpty
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: CachedNetworkImage(
-                          imageUrl: t.imageUrl!,
-                          width: 48,
-                          height: 48,
-                          fit: BoxFit.cover,
-                          errorWidget: (_, __, ___) =>
-                              const Icon(Icons.music_note_outlined),
+            itemCount: tracks.length,
+            itemBuilder: (_, i) {
+              final t = tracks[i];
+              final k = _key(t.artist, t.title);
+              final selected = _selected.contains(k);
+              return Dismissible(
+                key: ValueKey('fav-song-$k'),
+                direction: _selectMode
+                    ? DismissDirection.none
+                    : DismissDirection.endToStart,
+                background: Container(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: 20),
+                  child: const Icon(Icons.delete_outline),
+                ),
+                onDismissed: (_) {
+                  ref
+                      .read(favoritesRepositoryProvider)
+                      .remove(t.artist, t.title);
+                  ref.read(favoritesVersionProvider.notifier).state++;
+                },
+                child: _selectMode
+                    ? ListTile(
+                        leading: Checkbox(
+                          value: selected,
+                          onChanged: (_) => setState(() => selected
+                              ? _selected.remove(k)
+                              : _selected.add(k)),
                         ),
+                        title: Text(t.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                        subtitle: Text(t.artist,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                        onTap: () => setState(() => selected
+                            ? _selected.remove(k)
+                            : _selected.add(k)),
                       )
-                    : const Icon(Icons.music_note_outlined, size: 40),
-            title: Text(t.title,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(t.artist,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            trailing: _selectMode
-                ? null
-                : IconButton(
-                    icon: const Icon(Icons.open_in_new, size: 20),
-                    tooltip: 'Open in…',
-                    onPressed: () => showOutboundSheet(context, t),
-                  ),
-            onTap: _selectMode
-                ? () => setState(() =>
-                    selected ? _selected.remove(k) : _selected.add(k))
-                : () => showOutboundSheet(context, t),
-          ),
-        );
-      },
+                    : EditorialSongRow(
+                        track: t,
+                        queue: tracks,
+                        meta: isComplex && t.durationMs != null
+                            ? _formatDuration(t.durationMs!)
+                            : null,
+                        onOverflow: () => showOutboundSheet(context, t),
+                      ),
+              );
+            },
           ),
         ),
       ],
@@ -344,8 +403,14 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
 
   Widget _albumsTab(List<AlbumRec> albums) {
     if (albums.isEmpty) {
-      return _emptyState(Icons.album_outlined,
-          'No favorite albums yet.\nTap the heart on any album.');
+      return Center(
+        child: EditorialEmptyState(
+          message: 'No favorite albums yet. '
+              'Tap the heart on any album.',
+          actionLabel: 'Browse home',
+          onAction: _goHome,
+        ),
+      );
     }
     return ListView.builder(
       itemCount: albums.length,
@@ -378,7 +443,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                   )
                 : a.artUrl != null && a.artUrl!.isNotEmpty
                     ? ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(2),
                         child: CachedNetworkImage(
                           imageUrl: a.artUrl!,
                           width: 48,
@@ -404,27 +469,14 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
             onTap: _selectMode
                 ? () => setState(() =>
                     selected ? _selected.remove(k) : _selected.add(k))
-                : () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => AlbumDetailScreen(album: a))),
+                : () => Navigator.of(context).push(editorialRoute(
+                    context,
+                    (_) => AlbumDetailScreen(album: a))),
           ),
         );
       },
     );
   }
-
-  Widget _emptyState(IconData icon, String message) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 56),
-              const SizedBox(height: 12),
-              Text(message, textAlign: TextAlign.center),
-            ],
-          ),
-        ),
-      );
 }
 
 class _PickItem {

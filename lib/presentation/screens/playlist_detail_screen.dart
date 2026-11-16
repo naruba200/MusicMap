@@ -1,10 +1,17 @@
-// Playlist detail (S-03): cover + meta, virtualized track list (500+ safe),
-// count presets, discovery modifier chips, Fresh finds toggle, Rescan,
-// and the "Get recommendations" CTA (M2 engine).
+// Playlist detail (S-03): a liner-notes sheet. Large cover left,
+// name, platform badge, owner, track count, the track list as a
+// numbered tracklist, count presets and modifier chips, Fresh finds
+// toggle, Rescan, and the big "Get recommendations" button in the
+// theme accent (disabled below 5 usable tracks, with the guidance
+// line). Tap a track plays it at once (no double-tap window); the
+// heart likes without playing; overflow opens the track elsewhere.
+// In Complex the settings split into two columns and each track
+// shows its duration (plus its YouTube match, once reviewed).
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/appearance.dart';
 import '../../core/constants.dart';
 import '../../core/time_ago.dart';
 import '../../data/engine/recommendation_engine.dart';
@@ -13,11 +20,17 @@ import '../../data/models/music_models.dart';
 import '../../data/platforms/music_platform.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
-import '../widgets/favorite_button.dart';
-import '../widgets/preview_button.dart';
+import '../widgets/editorial_route.dart';
+import '../widgets/editorial_widgets.dart';
+import '../widgets/outbound_sheet.dart';
+import '../widgets/song_row.dart';
 import '../widgets/spotify_youtube_review.dart';
 import '../widgets/youtube_export_sheet.dart';
 import 'generating_screen.dart';
+
+bool _isComplex(BuildContext context) =>
+    Theme.of(context).extension<MusicManDesignTokens>()?.design ==
+    AppDesign.complex;
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
   final String platformId;
@@ -45,7 +58,6 @@ class _PlaylistDetailScreenState
   String? _lastGenre;
   bool _initialized = false;
   bool _rescanning = false;
-  bool _retrying = false;
 
   /// YouTube-match review state (Spotify only, push 3): the finished
   /// resolution, plus the matched tracks as normalized keys for the
@@ -148,8 +160,10 @@ class _PlaylistDetailScreenState
           _initFromData(data);
           return _buildContent(context, data);
         },
-        loading: () =>
-            const Center(child: CircularProgressIndicator()),
+        loading: () => const Center(
+          child: EditorialLoadingState(
+              message: 'Loading your playlist'),
+        ),
         error: (e, _) => _buildError(context, e),
       ),
     );
@@ -161,42 +175,25 @@ class _PlaylistDetailScreenState
     final message =
         e is PlatformException ? e.message : 'Could not load playlist: $e';
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.cloud_off_outlined,
-                size: 48,
-                color: Theme.of(context).colorScheme.error),
-            const SizedBox(height: 12),
-            Text(message, textAlign: TextAlign.center),
+            EditorialErrorState(
+              message: message,
+              onRetry: () =>
+                  ref.invalidate(playlistDetailProvider(_detailKey)),
+            ),
             if (platform.isBeta) ...[
               const SizedBox(height: 8),
               Text(
-                '${platform.displayName} is experimental (β) — '
-                'if this keeps failing, try Deezer instead.',
+                '${platform.displayName} is experimental (β). '
+                'If this keeps failing, try Deezer instead.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
-            const SizedBox(height: 16),
-            if (_retrying) ...[
-              const SizedBox(
-                height: 56,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 3)),
-              ),
-              const SizedBox(height: 8),
-              Text('Retrying…', style: Theme.of(context).textTheme.bodySmall),
-            ] else
-              FilledButton.tonal(
-                onPressed: () async {
-                  setState(() => _retrying = true);
-                  ref.invalidate(playlistDetailProvider(_detailKey));
-                  if (mounted) setState(() => _retrying = false);
-                },
-                child: const Text('Retry'),
-              ),
             TextButton(
               onPressed: () => platform.openPlaylist(widget.playlistId),
               child: Text('Open in ${platform.displayName} instead'),
@@ -209,53 +206,90 @@ class _PlaylistDetailScreenState
 
   Widget _buildContent(BuildContext context, PlaylistDetailData data) {
     final tracks = data.tracks;
+    final isComplex = _isComplex(context);
     // Index 0 = header; the rest virtualize the track list.
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(vertical: 16),
       itemCount: tracks.length + 1,
       itemBuilder: (context, i) {
-        if (i == 0) return _buildHeader(context, data);
+        if (i == 0) return _buildHeader(context, data, isComplex);
         final t = tracks[i - 1];
-        return ListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          leading: t.imageUrl != null
-              ? ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: Image.network(t.imageUrl!,
-                      width: 40, height: 40, fit: BoxFit.cover),
-                )
-              : const Icon(Icons.music_note),
-          title: Text(t.title,
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text(t.artist,
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // YouTube-match mark (Spotify review, push 3): shown
-              // once the review has run for this playlist.
-              if (_youTubeResolution != null)
-                Icon(
-                  _isYouTubeMatched(t)
-                      ? Icons.check_circle
-                      : Icons.close,
-                  size: 18,
-                  color: _isYouTubeMatched(t)
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              FavoriteButton(track: t),
-              PreviewButton(track: t, queue: tracks),
-            ],
-          ),
+        return EditorialSongRow(
+          key: ValueKey('playlist-track-${i - 1}'),
+          track: t,
+          queue: tracks,
+          rank: i,
+          doubleTapToLike: false,
+          meta: _rowMeta(t, isComplex),
+          trailingMark: _youTubeMark(t),
+          onOverflow: () => showOutboundSheet(context, t),
         );
       },
     );
   }
 
-  Widget _buildHeader(BuildContext context, PlaylistDetailData data) {
+  /// Complex-only row metadata: the track duration, plus its YouTube
+  /// match once the Spotify review has run. The match also has a
+  /// per-row mark in both designs (see [_youTubeMark]); the text
+  /// here is the Complex-only wording of the same state.
+  String? _rowMeta(Track track, bool isComplex) {
+    if (!isComplex) return null;
+    final parts = <String>[];
+    if (track.durationMs != null) {
+      parts.add(_formatDuration(track.durationMs!));
+    }
+    if (_youTubeResolution != null) {
+      parts.add(_isYouTubeMatched(track)
+          ? 'Found on YouTube'
+          : 'Not found on YouTube');
+    }
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
+
+  /// Per-row YouTube match mark (both designs): a check in the theme
+  /// accent when the track matched, a plain cross when it did not.
+  /// Null before the Spotify review has run, so no mark is shown
+  /// for a state that does not exist yet.
+  Widget? _youTubeMark(Track track) {
+    if (_youTubeResolution == null) return null;
+    final scheme = Theme.of(context).colorScheme;
+    final matched = _isYouTubeMatched(track);
+    return Icon(
+      matched ? Icons.check : Icons.close,
+      size: 18,
+      color: matched ? scheme.primary : scheme.onSurfaceVariant,
+      semanticLabel:
+          matched ? 'Found on YouTube' : 'Not found on YouTube',
+    );
+  }
+
+  String _formatDuration(int ms) {
+    final total = Duration(milliseconds: ms).inSeconds;
+    return '${total ~/ 60}:${(total % 60).toString().padLeft(2, '0')}';
+  }
+
+  /// Total runtime of the tracks that carry a duration, for the
+  /// Complex tracklist header. Null when no track reports one.
+  String? _totalRuntime(List<Track> tracks) {
+    var totalMs = 0;
+    var known = 0;
+    for (final t in tracks) {
+      if (t.durationMs != null) {
+        totalMs += t.durationMs!;
+        known++;
+      }
+    }
+    if (known == 0) return null;
+    final minutes = Duration(milliseconds: totalMs).inMinutes;
+    if (minutes < 60) return '$minutes min total';
+    return '${minutes ~/ 60} h ${minutes % 60} min total';
+  }
+
+  Widget _buildHeader(
+      BuildContext context, PlaylistDetailData data, bool isComplex) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final tokens = Theme.of(context).extension<MusicManDesignTokens>();
     final info = data.info;
     final platform = data.platform;
     // Spotify skips unreadable items (restricted/removed tracks): say
@@ -283,88 +317,200 @@ class _PlaylistDetailScreenState
         ? ref.watch(relatedGenresProvider(_lastGenre!))
         : const AsyncValue<List<String>>.data(<String>[]);
 
+    final generation = ref.watch(generationProvider);
+    final coverSize = isComplex ? 144.0 : 104.0;
+    final totalRuntime = _totalRuntime(data.tracks);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: coverSize,
+                height: coverSize,
+                decoration: BoxDecoration(
+                  color: scheme.surface,
+                  border: Border.all(color: scheme.outline),
+                  borderRadius:
+                      BorderRadius.circular(tokens?.coverRadius ?? 2),
+                  boxShadow: isComplex
+                      ? (tokens?.raisedShadow ?? const [])
+                      : const [],
+                ),
+                child: ClipRRect(
+                  borderRadius:
+                      BorderRadius.circular(tokens?.coverRadius ?? 2),
+                  child: info.coverUrl != null
+                      ? Image.network(info.coverUrl!,
+                          width: coverSize,
+                          height: coverSize,
+                          fit: BoxFit.cover)
+                      : Icon(Icons.queue_music,
+                          size: 40, color: scheme.onSurfaceVariant),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(info.name,
+                        style: theme.textTheme.titleLarge,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      children: [
+                        _badge(context, platform.displayName),
+                        if (platform.isBeta) _badge(context, 'β'),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${info.owner ?? 'Unknown owner'} · '
+                      '${data.tracks.length} tracks'
+                      '${saved != null ? ' · scanned ${timeAgo(saved.lastScannedAt)}' : ''}',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    if (readableLabel != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          readableLabel,
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ),
+                    // Phase 4a: the import stopped early (e.g. YouTube
+                    // Music's 100-track shelf cap with a dead-end
+                    // continuation). Say so plainly instead of presenting
+                    // a partial list as the whole playlist.
+                    if (data.truncated)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.warning_amber,
+                                size: 16,
+                                color: scheme.onSurfaceVariant),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Only the first 100 tracks loaded. '
+                                'YouTube Music cut the list short. '
+                                'Reopen this playlist to retry the '
+                                'full import.',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Divider(height: 1),
+          const SizedBox(height: 16),
+
+          // Settings. Complex lays them out in two columns (counts
+          // and toggle left, modifier chips right); Compact stacks
+          // them in one column.
+          if (isComplex)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _countColumn(context, saved, platform),
+                ),
+                const SizedBox(width: 24),
+                Expanded(
+                  child: _chipsColumn(
+                      context, visibleGenres, relatedAsync),
+                ),
+              ],
+            )
+          else ...[
+            _countColumn(context, saved, platform),
+            const SizedBox(height: 16),
+            _chipsColumn(context, visibleGenres, relatedAsync),
+          ],
+          const SizedBox(height: 16),
+
+          // CTA: the button turns into inline progress while a run
+          // is in flight ("Analyzing track N of 20").
+          _buildCta(context, data, generation),
+          const SizedBox(height: 8),
+
+          // Spotify import review (push 3): resolve the imported tracks
+          // to YouTube and mark each row matched/unmatched.
+          if (platform.id == PlatformIds.spotify) ...[
+            SpotifyYouTubeReview(
+              tracks: data.tracks,
+              onResolved: (resolution) => setState(() {
+                _youTubeResolution = resolution;
+                _youTubeMatchedKeys = {
+                  for (final s in resolution.songs)
+                    if (s.matched)
+                      RecommendationEngine.normalizeKey(
+                          s.track.artist, s.track.title),
+                };
+              }),
+            ),
+            // Save to YouTube (push 4): reuses the review's resolution,
+            // no second resolve. Only when something matched.
+            if (canSaveToYouTube(_youTubeResolution)) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => showYouTubeExportResultSheet(
+                      context, _youTubeResolution!),
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Save to YouTube'),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+          ],
+          Row(
+            children: [
+              Text('Tracks (${data.tracks.length})',
+                  style: theme.textTheme.titleSmall),
+              if (isComplex && totalRuntime != null) ...[
+                const Spacer(),
+                Text(totalRuntime,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant)),
+              ],
+            ],
+          ),
+          if (data.tracks.isEmpty)
+            EditorialEmptyState(
+              message: 'This playlist has no tracks to play.',
+              actionLabel: saved != null ? 'Rescan' : null,
+              onAction:
+                  saved != null ? () => _rescan(platform) : null,
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Count presets, the Fresh finds toggle, and Rescan.
+  Widget _countColumn(BuildContext context, SavedPlaylist? saved,
+      MusicPlatform platform) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: info.coverUrl != null
-                  ? Image.network(info.coverUrl!,
-                      width: 96, height: 96, fit: BoxFit.cover)
-                  : Container(
-                      width: 96,
-                      height: 96,
-                      color: theme.colorScheme.surfaceContainerHighest,
-                      child: const Icon(Icons.queue_music, size: 40),
-                    ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(info.name,
-                      style: theme.textTheme.titleLarge,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 4),
-                  Wrap(
-                    spacing: 6,
-                    children: [
-                      _badge(context, platform.displayName),
-                      if (platform.isBeta) _badge(context, 'β'),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${info.owner ?? 'Unknown owner'} · '
-                    '${data.tracks.length} tracks'
-                    '${saved != null ? ' · scanned ${timeAgo(saved.lastScannedAt)}' : ''}',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  if (readableLabel != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        readableLabel,
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    ),
-                  // Phase 4a: the import stopped early (e.g. YouTube
-                  // Music's 100-track shelf cap with a dead-end
-                  // continuation). Say so plainly instead of presenting
-                  // a partial list as the whole playlist.
-                  if (data.truncated)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(Icons.warning_amber,
-                              size: 16,
-                              color: theme.colorScheme.tertiary),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              'Only the first 100 tracks loaded — '
-                              'YouTube Music cut the list short. '
-                              'Reopen this playlist to retry the '
-                              'full import.',
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
         if (saved != null)
           OutlinedButton.icon(
             onPressed: _rescanning ? null : () => _rescan(platform),
@@ -376,8 +522,7 @@ class _PlaylistDetailScreenState
                 : const Icon(Icons.refresh),
             label: const Text('Rescan'),
           ),
-        const SizedBox(height: 8),
-
+        if (saved != null) const SizedBox(height: 12),
         // Count presets (FR-04d).
         Text('Songs', style: theme.textTheme.titleSmall),
         Wrap(
@@ -417,26 +562,33 @@ class _PlaylistDetailScreenState
           ],
         ),
         const SizedBox(height: 12),
-
-        // Discovery modifiers (FR-04e).
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('Discovery filters', style: theme.textTheme.titleSmall),
-            Row(
-              children: [
-                const Text('Fresh finds'),
-                Switch(
-                  value: _freshFinds,
-                  onChanged: (v) {
-                    setState(() => _freshFinds = v);
-                    _persistSettings();
-                  },
-                ),
-              ],
+            Text('Fresh finds', style: theme.textTheme.titleSmall),
+            Switch(
+              value: _freshFinds,
+              onChanged: (v) {
+                setState(() => _freshFinds = v);
+                _persistSettings();
+              },
             ),
           ],
         ),
+      ],
+    );
+  }
+
+  /// Discovery modifier chips: moods, genres, and related genres.
+  Widget _chipsColumn(BuildContext context, List<String> visibleGenres,
+      AsyncValue<List<String>> relatedAsync) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Discovery filters', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
         Text('Moods', style: theme.textTheme.labelMedium),
         Wrap(
           spacing: 8,
@@ -493,7 +645,7 @@ class _PlaylistDetailScreenState
                 const SizedBox(height: 4),
                 Text('Related',
                     style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.secondary)),
+                        color: scheme.secondary)),
                 Wrap(
                   spacing: 8,
                   runSpacing: 4,
@@ -503,7 +655,7 @@ class _PlaylistDetailScreenState
                         label: Text(genre),
                         selected: _genres.contains(genre),
                         side: BorderSide(
-                            color: theme.colorScheme.secondary
+                            color: scheme.secondary
                                 .withValues(alpha: 0.5)),
                         onSelected: (v) {
                           setState(() {
@@ -525,91 +677,102 @@ class _PlaylistDetailScreenState
           loading: () => const SizedBox.shrink(),
           error: (_, __) => const SizedBox.shrink(),
         ),
-        const SizedBox(height: 16),
+      ],
+    );
+  }
 
-        // CTA.
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton(
-            onPressed: data.tracks.length < minUsableTracks
-                ? () => _snack(
-                    'Need at least $minUsableTracks tracks — this playlist has ${data.tracks.length}.')
-                : () {
-                    final settings = DiscoverySettings(
-                      songCount: _songCount,
-                      albumCount: _albumCount,
-                      moods: Set.of(_moods),
-                      genres: Set.of(_genres),
-                      freshFinds: _freshFinds,
-                    );
-                    _persistSettings();
-                    ref.read(generationProvider.notifier).reset();
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => GeneratingScreen(
-                          args: GenerationArgs(
-                            surprise: false,
-                            seedName: data.info.name,
-                            seedPlaylistId: widget.playlistId,
-                            seedPlatformId: widget.platformId,
-                            tracks: data.tracks,
-                            settings: settings,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-            child: const Text('Get recommendations'),
-          ),
+  /// The big Get recommendations button. Disabled below 5 usable
+  /// tracks, with the guidance line; turns into inline progress
+  /// while a run is in flight.
+  Widget _buildCta(BuildContext context, PlaylistDetailData data,
+      GenerationState generation) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final progress = generation.progress;
+    if (generation.running) {
+      return Container(
+        width: double.infinity,
+        padding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          border: Border.all(color: scheme.outline),
+          borderRadius: BorderRadius.circular(4),
         ),
-        const SizedBox(height: 8),
-
-        // Spotify import review (push 3): resolve the imported tracks
-        // to YouTube and mark each row matched/unmatched.
-        if (platform.id == PlatformIds.spotify) ...[
-          SpotifyYouTubeReview(
-            tracks: data.tracks,
-            onResolved: (resolution) => setState(() {
-              _youTubeResolution = resolution;
-              _youTubeMatchedKeys = {
-                for (final s in resolution.songs)
-                  if (s.matched)
-                    RecommendationEngine.normalizeKey(
-                        s.track.artist, s.track.title),
-              };
-            }),
-          ),
-          // Save to YouTube (push 4): reuses the review's resolution —
-          // no second resolve. Only when something matched.
-          if (canSaveToYouTube(_youTubeResolution)) ...[
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            LinearProgressIndicator(value: progress?.fraction),
             const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () => showYouTubeExportResultSheet(
-                    context, _youTubeResolution!),
-                icon: const Icon(Icons.open_in_new),
-                label: const Text('Save to YouTube'),
-              ),
+            Text(
+              progress != null
+                  ? 'Analyzing track ${progress.done} of ${progress.total}'
+                  : 'Starting recommendations...',
+              style: theme.textTheme.bodyMedium,
             ),
           ],
+        ),
+      );
+    }
+    final tooFew = data.tracks.length < minUsableTracks;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FilledButton(
+          onPressed: tooFew
+              ? null
+              : () {
+                  final settings = DiscoverySettings(
+                    songCount: _songCount,
+                    albumCount: _albumCount,
+                    moods: Set.of(_moods),
+                    genres: Set.of(_genres),
+                    freshFinds: _freshFinds,
+                  );
+                  _persistSettings();
+                  ref.read(generationProvider.notifier).reset();
+                  Navigator.of(context).push(
+                    editorialRoute(
+                      context,
+                      (_) => GeneratingScreen(
+                        args: GenerationArgs(
+                          surprise: false,
+                          seedName: data.info.name,
+                          seedPlaylistId: widget.playlistId,
+                          seedPlatformId: widget.platformId,
+                          tracks: data.tracks,
+                          settings: settings,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+          child: const Text('Get recommendations'),
+        ),
+        if (tooFew) ...[
           const SizedBox(height: 8),
+          Text(
+            'Need at least $minUsableTracks tracks to generate '
+            'recommendations. This playlist has ${data.tracks.length}.',
+            style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant),
+          ),
         ],
-        Text('Tracks (${data.tracks.length})',
-            style: theme.textTheme.titleSmall),
       ],
     );
   }
 
   Widget _badge(BuildContext context, String label) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(6),
-        color: Theme.of(context).colorScheme.secondaryContainer,
+        color: scheme.surface,
+        border: Border.all(color: scheme.outline),
+        borderRadius: BorderRadius.circular(2),
       ),
-      child: Text(label,
-          style: Theme.of(context).textTheme.labelSmall),
+      child:
+          Text(label, style: Theme.of(context).textTheme.labelSmall),
     );
   }
 }
