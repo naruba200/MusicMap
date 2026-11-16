@@ -40,3 +40,34 @@ Route<T> editorialRoute<T>(BuildContext context, WidgetBuilder builder) {
     },
   );
 }
+
+/// Builds the route for the full player, gated on the current design.
+///
+/// The player rises from the bottom over [MusicManDesignTokens.playerRise]
+/// (220 ms) in Complex; in Compact the design is strictly MOTION 0, so
+/// it appears instantly with no animation. The reverse (swipe-down
+/// dismiss) uses the same duration, so the player leaves the way it
+/// came.
+Route<T> playerRoute<T>(BuildContext context, WidgetBuilder builder) {
+  final duration = Theme.of(context)
+          .extension<MusicManDesignTokens>()
+          ?.playerRise ??
+      Duration.zero;
+  return PageRouteBuilder<T>(
+    transitionDuration: duration,
+    reverseTransitionDuration: duration,
+    pageBuilder: (context, animation, secondaryAnimation) =>
+        builder(context),
+    transitionsBuilder:
+        (context, animation, secondaryAnimation, child) {
+      if (duration == Duration.zero) return child;
+      final rise = Tween<Offset>(
+        begin: const Offset(0, 1),
+        end: Offset.zero,
+      ).animate(
+        CurvedAnimation(parent: animation, curve: Curves.easeOut),
+      );
+      return SlideTransition(position: rise, child: child);
+    },
+  );
+}

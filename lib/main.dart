@@ -148,21 +148,24 @@ class MusicManApp extends ConsumerWidget {
       darkTheme: themeData,
       navigatorKey: navigatorKey,
       home: const _RootScaffold(),
+      // The shell wraps the root Navigator (child): the mini-player
+      // and the bottom nav sit above it, so pushed routes cover the
+      // tab content but never the player or the nav.
+      builder: (context, child) =>
+          AppShell(child: child ?? const SizedBox.shrink()),
     );
   }
 }
 
-class _RootScaffold extends ConsumerWidget {
-  const _RootScaffold();
+/// The outer shell above the root Navigator: the mini-player and the
+/// bottom nav live here, so pushed routes (Results, Playlist detail,
+/// the full player) cover the tab content but never the player or the
+/// nav. The [child] is the root Navigator itself. Deep links and
+/// [navigatorKey] pushes land on that Navigator, so they keep working.
+class AppShell extends ConsumerWidget {
+  const AppShell({super.key, required this.child});
 
-  static const _screens = [
-    HomeScreen(),
-    DiscoverScreen(),
-    NewsScreen(),
-    FavoritesScreen(),
-    HistoryScreen(),
-    SettingsScreen(),
-  ];
+  final Widget child;
 
   static const _destinations = [
     (Icons.home_outlined, Icons.home, 'Home'),
@@ -224,33 +227,64 @@ class _RootScaffold extends ConsumerWidget {
         );
       },
     );
-    return Scaffold(
-      body: IndexedStack(index: index, children: _screens),
-      // The mini-player sits above the nav on every tab. It watches
-      // the player itself, so position ticks rebuild only the bar;
-      // this scaffold stays out of it.
-      bottomNavigationBar: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const MiniPlayerBar(),
-          NavigationBar(
-            selectedIndex: index,
-            onDestinationSelected: (i) {
-              // Visiting News clears the dot and records the visit.
-              if (i == 2) ref.read(newsProvider.notifier).markSeen();
-              ref.read(tabIndexProvider.notifier).state = i;
-            },
-            destinations: [
-              for (var d = 0; d < _destinations.length; d++)
-                NavigationDestination(
-                  icon: _destinationIcon(d, false, hasNew),
-                  selectedIcon: _destinationIcon(d, true, hasNew),
-                  label: _destinations[d].$3,
+    // The shell wraps its Scaffold in its own Overlay: the shell sits
+    // above the root Navigator, so the Navigator's Overlay is not an
+    // ancestor of the mini-player. IconButton tooltips (and any other
+    // overlay user down here) need one, or they throw in debug builds.
+    return Overlay(
+      initialEntries: [
+        OverlayEntry(
+          builder: (context) => Scaffold(
+            body: child,
+            // The mini-player sits above the nav on every tab and every
+            // pushed route. It watches the player itself, so position
+            // ticks rebuild only the bar; this shell stays out of it.
+            bottomNavigationBar: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const MiniPlayerBar(),
+                NavigationBar(
+                  selectedIndex: index,
+                  onDestinationSelected: (i) {
+                    // Visiting News clears the dot and records the visit.
+                    if (i == 2) {
+                      ref.read(newsProvider.notifier).markSeen();
+                    }
+                    ref.read(tabIndexProvider.notifier).state = i;
+                  },
+                  destinations: [
+                    for (var d = 0; d < _destinations.length; d++)
+                      NavigationDestination(
+                        icon: _destinationIcon(d, false, hasNew),
+                        selectedIcon: _destinationIcon(d, true, hasNew),
+                        label: _destinations[d].$3,
+                      ),
+                  ],
                 ),
-            ],
+              ],
+            ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
+  }
+}
+
+class _RootScaffold extends ConsumerWidget {
+  const _RootScaffold();
+
+  static const _screens = [
+    HomeScreen(),
+    DiscoverScreen(),
+    NewsScreen(),
+    FavoritesScreen(),
+    HistoryScreen(),
+    SettingsScreen(),
+  ];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final index = ref.watch(tabIndexProvider);
+    return IndexedStack(index: index, children: _screens);
   }
 }

@@ -5,9 +5,9 @@
 // favorites + playlist repos are real, backed by Hive boxes in a
 // temp dir.
 //
-// NOTE: these tests never use pumpAndSettle — the bar shows an
-// indeterminate "Live" progress indicator while a stream reports no
-// duration, and that animation never settles. Pump past the bottom
+// NOTE: these tests never use pumpAndSettle: the bar shows an
+// indeterminate "Live" progress indicator while a live stream reports
+// no duration, and that animation never settles. Pump past the bottom
 // sheet's animation with an explicit duration instead.
 
 import 'dart:io';
@@ -174,9 +174,11 @@ void main() {
       final player = notifier(backend);
       await player.play(_trackA, queue: [_trackA]);
       await pumpBar(tester, player);
-      // A stream with no duration reports "Live", not a slider.
-      expect(find.text('Live'), findsOneWidget);
+      // No duration and not live: no "Live" label and no slider, just
+      // the zero times. "Live" is only for true live streams.
+      expect(find.text('Live'), findsNothing);
       expect(find.byType(Slider), findsNothing);
+      expect(find.text('0:00'), findsNWidgets(2));
       backend.durationController.add(const Duration(seconds: 30));
       backend.positionController.add(const Duration(seconds: 5));
       await tester.pump();
