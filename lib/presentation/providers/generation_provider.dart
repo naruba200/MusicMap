@@ -1166,6 +1166,10 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   }
 }
 
+/// Repeat behaviour at the end of a track (completion) and on
+/// next/previous at the ends of the queue.
+enum RepeatMode { off, all, one }
+
 /// Snapshot of the single shared player (mini-player, play buttons and
 /// the Android media notification all read this one state).
 class PlaybackState {
@@ -1193,6 +1197,21 @@ class PlaybackState {
   final Duration position;
   final Duration? duration;
 
+  /// True when the current track is a live stream (Jamendo radio).
+  /// Live streams show "Live" instead of a duration, and never
+  /// report one.
+  final bool isLive;
+
+  /// Shuffle state. When true, next/previous walk [shuffledOrder]
+  /// instead of [queue] order; the order holds queue indices with
+  /// the current track first. Empty when shuffle is off.
+  final bool shuffleEnabled;
+  final List<int> shuffledOrder;
+
+  /// Repeat mode for completion auto-advance and next/previous at
+  /// the ends of the queue.
+  final RepeatMode repeatMode;
+
   /// Human-readable reason for the last playback failure, if any.
   /// Shown once as a SnackBar by the root scaffold; [errorSeq]
   /// increments per failure so the scaffold can tell a new failure
@@ -1209,6 +1228,10 @@ class PlaybackState {
     this.resolvingKey,
     this.position = Duration.zero,
     this.duration,
+    this.isLive = false,
+    this.shuffleEnabled = false,
+    this.shuffledOrder = const [],
+    this.repeatMode = RepeatMode.off,
     this.lastError,
     this.errorSeq = 0,
   });
@@ -1222,8 +1245,38 @@ class PlaybackState {
           currentTrack!.artist, currentTrack!.title);
 
   bool get hasCurrentTrack => currentTrack != null;
-  bool get hasNext => queueIndex >= 0 && queueIndex + 1 < queue.length;
-  bool get hasPrevious => queueIndex > 0;
+
+  /// Position of the current track inside [shuffledOrder], -1 when
+  /// shuffle is off or the order does not cover the current track.
+  int get shufflePosition =>
+      shuffleEnabled ? shuffledOrder.indexOf(queueIndex) : -1;
+
+  /// True when next() would move to another track: there is a later
+  /// track in the active order, or repeat-all wraps to the start.
+  bool get hasNext {
+    if (queueIndex < 0 || queue.isEmpty) return false;
+    if (shuffleEnabled && shuffledOrder.isNotEmpty) {
+      final pos = shufflePosition;
+      if (pos < 0) return false;
+      return pos + 1 < shuffledOrder.length ||
+          repeatMode == RepeatMode.all;
+    }
+    return queueIndex + 1 < queue.length || repeatMode == RepeatMode.all;
+  }
+
+  /// True when previous() would move to another track: there is an
+  /// earlier track in the active order, or repeat-all wraps to the
+  /// end. (previous() restarts the current track first when well
+  /// into it, so this only gates the move itself.)
+  bool get hasPrevious {
+    if (queueIndex < 0 || queue.isEmpty) return false;
+    if (shuffleEnabled && shuffledOrder.isNotEmpty) {
+      final pos = shufflePosition;
+      if (pos < 0) return false;
+      return pos > 0 || repeatMode == RepeatMode.all;
+    }
+    return queueIndex > 0 || repeatMode == RepeatMode.all;
+  }
 
   /// 0..1 progress for the mini-player bar; 0 when duration is unknown.
   double get progressFraction {
@@ -1244,6 +1297,10 @@ class PlaybackState {
     Duration? position,
     Duration? duration,
     bool clearDuration = false,
+    bool? isLive,
+    bool? shuffleEnabled,
+    List<int>? shuffledOrder,
+    RepeatMode? repeatMode,
     String? lastError,
     bool clearLastError = false,
     int? errorSeq,
@@ -1259,6 +1316,10 @@ class PlaybackState {
             clearResolvingKey ? null : (resolvingKey ?? this.resolvingKey),
         position: position ?? this.position,
         duration: clearDuration ? null : (duration ?? this.duration),
+        isLive: isLive ?? this.isLive,
+        shuffleEnabled: shuffleEnabled ?? this.shuffleEnabled,
+        shuffledOrder: shuffledOrder ?? this.shuffledOrder,
+        repeatMode: repeatMode ?? this.repeatMode,
         lastError: clearLastError ? null : (lastError ?? this.lastError),
         errorSeq: errorSeq ?? this.errorSeq,
       );
@@ -1324,9 +1385,14 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
     if (_stateSub != null) return;
     _stateSub = _audio.onPlayerStateChanged.listen((playerState) {
       if (playerState != PlayerState.completed) return;
-      // A finished track advances the queue; the last one stops.
-      if (state.hasNext) {
-        unawaited(_playAt(state.queueIndex + 1));
+      // A finished track replays, advances, or stops by repeat mode.
+      if (state.repeatMode == RepeatMode.one) {
+        unawaited(_replayCurrent());
+        return;
+      }
+      final next = _nextIndex();
+      if (next != null) {
+        unawaited(_playAt(next));
       } else {
         unawaited(stop());
       }
@@ -1415,12 +1481,21 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   /// Record a playback failure for [track] (loaded, paused): the
   /// mini-player still shows what failed, and bumping
   /// [PlaybackState.errorSeq] makes the root scaffold's SnackBar fire.
+  /// Shuffle, repeat and live state survive the failure: the track
+  /// is still loaded with the same queue. [isLive] overrides the
+  /// preserved flag when the caller knows better (a failed load of
+  /// a new track); otherwise the current flag is kept.
   void _reportError(
-      String message, Track track, List<Track> queue, int index) {
+      String message, Track track, List<Track> queue, int index,
+      {bool? isLive}) {
     state = PlaybackState(
       currentTrack: track,
       queue: queue,
       queueIndex: index,
+      isLive: isLive ?? state.isLive,
+      shuffleEnabled: state.shuffleEnabled,
+      shuffledOrder: _orderForQueue(queue, index),
+      repeatMode: state.repeatMode,
       lastError: message,
       errorSeq: state.errorSeq + 1,
     );
@@ -1516,6 +1591,8 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
       isPlaying: false,
       isResolving: false,
       clearResolvingKey: true,
+      isLive: false,
+      shuffledOrder: _orderForQueue(queue, index),
       clearLastError: true,
     );
     return null;
@@ -1526,8 +1603,11 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   /// [play]: a full stream for the same track key that is already
   /// playing must not swallow the new one as a "pause". Records the
   /// source so the shared buttons show the playing state honestly.
+  /// [live] marks a true live stream (Jamendo radio): the player
+  /// shows "Live" instead of a duration for it. In-app resolver
+  /// streams are files, so they stay false.
   Future<void> playStream(Track track, String url,
-      {String source = 'audius', List<Track>? queue}) async {
+      {String source = 'audius', List<Track>? queue, bool live = false}) async {
     final key = _key(track);
     final newQueue = queue ?? _queueFor(track);
     final index = _indexOfKey(newQueue, key);
@@ -1539,11 +1619,14 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
       queue: newQueue,
       index: index < 0 ? 0 : index,
       token: token,
+      isLive: live,
     );
   }
 
   /// Play the track at [index] in the current queue (mini-player
   /// next/previous, media notification, completion auto-advance).
+  /// When shuffle is on, the shuffle position re-anchors to [index]:
+  /// the order itself is unchanged, only the walk position moves.
   Future<void> playAt(int index) async {
     if (index < 0 || index >= state.queue.length) return;
     await _playAt(index);
@@ -1582,13 +1665,19 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   /// Stop the backend and start [url] for [track]; on a load failure
   /// the attempted track stays loaded (paused) with the reason in
   /// [PlaybackState.lastError]. [token] guards against superseded
-  /// resolves.
+  /// resolves. The duration is fetched explicitly after play:
+  /// onDurationChanged can fire while the old track is still in
+  /// state (and get dropped), so the event alone never fills the
+  /// new track's duration. A null fetch leaves the duration null
+  /// (live streams never report one); the event subscription stays
+  /// as a backup for a duration that arrives later.
   Future<void> _playResolved({
     required Track track,
     required String url,
     required List<Track> queue,
     required int index,
     required int token,
+    bool isLive = false,
   }) async {
     _ensureSubs();
     try {
@@ -1596,9 +1685,15 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
       await _audio.play(url);
     } on Object catch (e) {
       if (token != _playToken) return;
-      _reportError(playbackErrorMessage(e), track, queue, index);
+      _reportError(playbackErrorMessage(e), track, queue, index,
+          isLive: isLive);
       return;
     }
+    if (token != _playToken) return;
+    // Fetch after play, while the new track is about to land in
+    // state; a superseded resolve must not publish over the newer
+    // track, so the token is checked again after the fetch.
+    final fetchedDuration = await _audio.getDuration();
     if (token != _playToken) return;
     state = state.copyWith(
       currentTrack: track,
@@ -1608,7 +1703,10 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
       isResolving: false,
       clearResolvingKey: true,
       position: Duration.zero,
-      clearDuration: true,
+      duration: fetchedDuration,
+      clearDuration: fetchedDuration == null,
+      isLive: isLive,
+      shuffledOrder: _orderForQueue(queue, index),
       clearLastError: true,
     );
   }
@@ -1626,6 +1724,84 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
       if (_key(queue[i]) == key) return i;
     }
     return -1;
+  }
+
+  /// True when two queues hold the same tracks in the same order
+  /// (by normalized key), so a kept shuffled order still fits.
+  bool _sameQueue(List<Track> a, List<Track> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (_key(a[i]) != _key(b[i])) return false;
+    }
+    return true;
+  }
+
+  /// True when [order] is a full permutation of 0..[length).
+  bool _validOrder(List<int> order, int length) {
+    if (order.length != length) return false;
+    final seen = <int>{};
+    for (final i in order) {
+      if (i < 0 || i >= length || !seen.add(i)) return false;
+    }
+    return true;
+  }
+
+  /// Shuffled order of queue indices with [currentIndex] first.
+  List<int> _buildShuffledOrder(List<Track> queue, int currentIndex) {
+    final order = List<int>.generate(queue.length, (i) => i)..shuffle();
+    order.remove(currentIndex);
+    order.insert(0, currentIndex);
+    return order;
+  }
+
+  /// Shuffled order to store when [queue] becomes the playing queue
+  /// at [index]: keep the current order when the queue is unchanged
+  /// (next/previous walk it), rebuild anchored at the new track
+  /// when the queue itself changed, empty when shuffle is off.
+  List<int> _orderForQueue(List<Track> queue, int index) {
+    if (!state.shuffleEnabled) return const [];
+    if (_sameQueue(queue, state.queue) &&
+        _validOrder(state.shuffledOrder, queue.length) &&
+        state.shuffledOrder.contains(index)) {
+      return state.shuffledOrder;
+    }
+    if (queue.isEmpty || index < 0) return const [];
+    return _buildShuffledOrder(queue, index);
+  }
+
+  /// Queue index [i] lands at after moving the entry at [oldIndex]
+  /// to [newIndex].
+  int _movedIndex(int i, int oldIndex, int newIndex) {
+    if (i == oldIndex) return newIndex;
+    if (oldIndex < newIndex) {
+      if (i > oldIndex && i <= newIndex) return i - 1;
+    } else if (i >= newIndex && i < oldIndex) {
+      return i + 1;
+    }
+    return i;
+  }
+
+  /// Shuffled order after removing queue entry [removed]: the entry
+  /// drops out and later indices shift down by one.
+  List<int> _orderAfterRemoval(List<int> order, int removed) => [
+        for (final i in order)
+          if (i != removed) i > removed ? i - 1 : i,
+      ];
+
+  /// Shuffled order after inserting a queue entry at [insertAt]:
+  /// later indices shift up by one, and the new entry lands right
+  /// after the current track in the walk, so play-next means next
+  /// in shuffle order too. Empty stays empty (shuffle off).
+  List<int> _orderAfterInsertion(
+      List<int> order, int insertAt, int currentIndex) {
+    if (order.isEmpty) return const [];
+    final shifted = [
+      for (final i in order) i >= insertAt ? i + 1 : i,
+    ];
+    final pos = shifted.indexOf(currentIndex);
+    if (pos < 0) return [...shifted, insertAt];
+    shifted.insert(pos + 1, insertAt);
+    return shifted;
   }
 
   Future<void> pause() async {
@@ -1659,7 +1835,8 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   }
 
   Future<void> next() async {
-    if (state.hasNext) await _playAt(state.queueIndex + 1);
+    final next = _nextIndex();
+    if (next != null) await _playAt(next);
   }
 
   Future<void> previous() async {
@@ -1669,7 +1846,222 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
       await seek(Duration.zero);
       return;
     }
-    if (state.hasPrevious) await _playAt(state.queueIndex - 1);
+    final prev = _previousIndex();
+    if (prev != null) await _playAt(prev);
+  }
+
+  /// Queue index of the track next() would play, or null when there
+  /// is none: the next entry in the shuffled order while shuffle is
+  /// on, else the next queue entry; repeat-all wraps to the start.
+  int? _nextIndex() {
+    final s = state;
+    if (s.queue.isEmpty || s.queueIndex < 0) return null;
+    if (s.shuffleEnabled && s.shuffledOrder.isNotEmpty) {
+      final pos = s.shufflePosition;
+      if (pos < 0) return null;
+      if (pos + 1 < s.shuffledOrder.length) return s.shuffledOrder[pos + 1];
+      return s.repeatMode == RepeatMode.all ? s.shuffledOrder.first : null;
+    }
+    if (s.queueIndex + 1 < s.queue.length) return s.queueIndex + 1;
+    return s.repeatMode == RepeatMode.all ? 0 : null;
+  }
+
+  /// Queue index of the track previous() would play, or null when
+  /// there is none: the previous entry in the shuffled order while
+  /// shuffle is on, else the previous queue entry; repeat-all wraps
+  /// to the end.
+  int? _previousIndex() {
+    final s = state;
+    if (s.queue.isEmpty || s.queueIndex < 0) return null;
+    if (s.shuffleEnabled && s.shuffledOrder.isNotEmpty) {
+      final pos = s.shufflePosition;
+      if (pos < 0) return null;
+      if (pos > 0) return s.shuffledOrder[pos - 1];
+      return s.repeatMode == RepeatMode.all ? s.shuffledOrder.last : null;
+    }
+    if (s.queueIndex > 0) return s.queueIndex - 1;
+    return s.repeatMode == RepeatMode.all ? s.queue.length - 1 : null;
+  }
+
+  /// Replay the current track from the start (repeat-one
+  /// completion): seek to zero and resume directly on the backend,
+  /// since the state still reports playing after a completed event
+  /// and resume() would no-op on it.
+  Future<void> _replayCurrent() async {
+    final backend = _backend;
+    if (backend == null || !state.hasCurrentTrack) return;
+    await backend.seek(Duration.zero);
+    await backend.resume();
+    state = state.copyWith(position: Duration.zero, isPlaying: true);
+  }
+
+  /// Turn shuffle on or off. Turning it on builds a shuffled order
+  /// of queue indices with the current track first; turning it off
+  /// clears the order and restores plain queue order.
+  void toggleShuffle() {
+    if (state.shuffleEnabled) {
+      state = state.copyWith(shuffleEnabled: false, shuffledOrder: const []);
+      return;
+    }
+    final queue = state.queue;
+    final index = state.queueIndex;
+    final order = queue.isEmpty || index < 0
+        ? const <int>[]
+        : _buildShuffledOrder(queue, index);
+    state = state.copyWith(shuffleEnabled: true, shuffledOrder: order);
+  }
+
+  /// Cycle repeat off to all to one and back to off.
+  void cycleRepeat() {
+    switch (state.repeatMode) {
+      case RepeatMode.off:
+        setRepeatMode(RepeatMode.all);
+      case RepeatMode.all:
+        setRepeatMode(RepeatMode.one);
+      case RepeatMode.one:
+        setRepeatMode(RepeatMode.off);
+    }
+  }
+
+  void setRepeatMode(RepeatMode mode) {
+    state = state.copyWith(repeatMode: mode);
+  }
+
+  /// Reorder [queue]: move the track at [oldIndex] to [newIndex].
+  /// The current track keeps playing: [queueIndex] follows the same
+  /// track, and the shuffled order is remapped through the same move.
+  /// Out-of-range indices are a no-op.
+  void moveInQueue(int oldIndex, int newIndex) {
+    final queue = state.queue;
+    if (oldIndex < 0 ||
+        oldIndex >= queue.length ||
+        newIndex < 0 ||
+        newIndex >= queue.length ||
+        oldIndex == newIndex) {
+      return;
+    }
+    final newQueue = [...queue];
+    final track = newQueue.removeAt(oldIndex);
+    newQueue.insert(newIndex, track);
+    final newIndexOfCurrent =
+        _movedIndex(state.queueIndex, oldIndex, newIndex);
+    var order = [
+      for (final i in state.shuffledOrder)
+        _movedIndex(i, oldIndex, newIndex),
+    ];
+    if (state.shuffleEnabled && !_validOrder(order, newQueue.length)) {
+      order = _buildShuffledOrder(newQueue, newIndexOfCurrent);
+    }
+    state = state.copyWith(
+      queue: newQueue,
+      queueIndex: newIndexOfCurrent,
+      shuffledOrder: order,
+    );
+  }
+
+  /// Remove the track at [index] from the queue. Removing another
+  /// track leaves playback alone; removing the current track
+  /// advances to the next track (the next entry in the shuffled
+  /// order while shuffle is on, else the track that slides into its
+  /// place, wrapping to the first under repeat-all), or stops when
+  /// no next track remains. Out-of-range indices are a no-op.
+  Future<void> removeFromQueue(int index) async {
+    final s = state;
+    if (index < 0 || index >= s.queue.length) return;
+    final newQueue = [...s.queue]..removeAt(index);
+    if (newQueue.isEmpty) {
+      await stop();
+      return;
+    }
+    final order = _orderAfterRemoval(s.shuffledOrder, index);
+    if (index != s.queueIndex) {
+      final currentKey = s.currentKey;
+      state = s.copyWith(
+        queue: newQueue,
+        queueIndex:
+            currentKey == null ? -1 : _indexOfKey(newQueue, currentKey),
+        shuffledOrder: order,
+      );
+      return;
+    }
+    // The removed track was playing: advance, or stop at the end.
+    final target = _advanceTargetAfterRemoval(s, index, order);
+    if (target == null) {
+      await stop();
+      return;
+    }
+    state = s.copyWith(
+      queue: newQueue,
+      queueIndex: target,
+      shuffledOrder: order,
+    );
+    await _playAt(target);
+  }
+
+  /// Queue index removeFromQueue advances to after removing the
+  /// current track at [index], or null when playback should stop.
+  /// [order] is the shuffled order after the removal.
+  int? _advanceTargetAfterRemoval(
+      PlaybackState s, int index, List<int> order) {
+    if (s.shuffleEnabled && s.shuffledOrder.isNotEmpty) {
+      final pos = s.shuffledOrder.indexOf(index);
+      if (pos < 0) return null;
+      if (pos < order.length) return order[pos];
+      return s.repeatMode == RepeatMode.all && order.isNotEmpty
+          ? order.first
+          : null;
+    }
+    if (index < s.queue.length - 1) return index;
+    return s.repeatMode == RepeatMode.all ? 0 : null;
+  }
+
+  /// Insert [track] directly after the current track, so it plays
+  /// next. A track already in the queue moves there instead of
+  /// duplicating; the playing track itself is already first, so it
+  /// stays put. With nothing loaded, the track simply plays.
+  Future<void> playNext(Track track) async {
+    final s = state;
+    if (!s.hasCurrentTrack) {
+      await play(track);
+      return;
+    }
+    final key = _key(track);
+    if (key == s.currentKey) return;
+    final queue = [...s.queue];
+    final existing = _indexOfKey(queue, key);
+    var order = s.shuffledOrder;
+    var currentIndex = s.queueIndex;
+    if (existing >= 0) {
+      queue.removeAt(existing);
+      order = _orderAfterRemoval(order, existing);
+      if (existing < currentIndex) currentIndex -= 1;
+    }
+    final insertAt = currentIndex + 1;
+    queue.insert(insertAt, track);
+    order = _orderAfterInsertion(order, insertAt, currentIndex);
+    if (s.shuffleEnabled && !_validOrder(order, queue.length)) {
+      order = _buildShuffledOrder(queue, currentIndex);
+    }
+    state = s.copyWith(
+      queue: queue,
+      queueIndex: currentIndex,
+      shuffledOrder: order,
+    );
+  }
+
+  /// Append [track] to the end of the queue, unless it is already
+  /// there. Playback and the current track are untouched.
+  void addToQueue(Track track) {
+    final s = state;
+    if (_indexOfKey(s.queue, _key(track)) >= 0) return;
+    final queue = [...s.queue, track];
+    var order = s.shuffledOrder;
+    if (s.shuffleEnabled) {
+      order = _validOrder(order, s.queue.length)
+          ? [...order, queue.length - 1]
+          : _buildShuffledOrder(queue, s.queueIndex);
+    }
+    state = s.copyWith(queue: queue, shuffledOrder: order);
   }
 
   Future<void> seek(Duration position) async {

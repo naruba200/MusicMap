@@ -18,6 +18,13 @@ abstract class AudioBackend {
   Future<void> stop();
   Future<void> seek(Duration position);
   Future<void> dispose();
+
+  /// Duration of the loaded track, fetched on demand. The
+  /// onDurationChanged event can fire before the new track is in
+  /// state (and get dropped), so the player asks for the duration
+  /// explicitly after play instead of relying on the event alone.
+  /// Null when the backend has no duration yet (live streams).
+  Future<Duration?> getDuration();
 }
 
 /// [AudioBackend] backed by a real audioplayers [AudioPlayer].
@@ -51,6 +58,9 @@ class AudioplayersBackend implements AudioBackend {
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);
+
+  @override
+  Future<Duration?> getDuration() => _player.getDuration();
 
   @override
   Future<void> dispose() => _player.dispose();

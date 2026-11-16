@@ -17,6 +17,14 @@ class FakeAudioBackend implements AudioBackend {
   int resumeCalls = 0;
   int stopCalls = 0;
   Duration? lastSeek;
+  /// Duration returned by [getDuration]; null means the backend has
+  /// no duration for the loaded track (live stream, or not loaded).
+  Duration? fakeDuration;
+
+  /// When set, play() emits this duration on the duration stream
+  /// while playing, mimicking audioplayers firing onDurationChanged
+  /// during play (before the new track lands in state).
+  Duration? durationOnPlay;
 
   @override
   Stream<PlayerState> get onPlayerStateChanged => stateController.stream;
@@ -29,6 +37,7 @@ class FakeAudioBackend implements AudioBackend {
   Future<void> play(String url) async {
     if (playError != null) throw playError!;
     playedUrls.add(url);
+    if (durationOnPlay != null) durationController.add(durationOnPlay!);
     stateController.add(PlayerState.playing);
   }
 
@@ -55,6 +64,9 @@ class FakeAudioBackend implements AudioBackend {
     lastSeek = position;
     positionController.add(position);
   }
+
+  @override
+  Future<Duration?> getDuration() async => fakeDuration;
 
   @override
   Future<void> dispose() async {
