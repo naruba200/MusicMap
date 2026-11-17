@@ -15,6 +15,7 @@
 // only for true live streams: a track with no duration that is not
 // live shows no progress rule, just the zero times.
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -36,18 +37,21 @@ class MiniPlayerBar extends ConsumerStatefulWidget {
 }
 
 class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar> {
-  /// Position the user is dragging the slider to; null when not
-  /// dragging (the bar then shows the player's live position).
-  Duration? _dragPosition;
-
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(audioPlayerProvider);
-    final track = state.currentTrack;
+    // Select only the fields the strip renders. Position ticks
+    // rebuild nothing here: the progress row below is its own
+    // widget watching position alone.
+    final track = ref.watch(
+        audioPlayerProvider.select((s) => s.currentTrack));
     if (track == null) return const SizedBox.shrink();
+    final isPlaying = ref.watch(
+        audioPlayerProvider.select((s) => s.isPlaying));
+    final hasPrevious = ref.watch(
+        audioPlayerProvider.select((s) => s.hasPrevious));
+    final hasNext = ref.watch(
+        audioPlayerProvider.select((s) => s.hasNext));
     final player = ref.read(audioPlayerProvider.notifier);
-    final duration = state.duration;
-    final position = _dragPosition ?? state.position;
     final theme = Theme.of(context);
     final tokens = theme.extension<MusicManDesignTokens>();
     // Album when present, else the source label (Deezer, Audius and
@@ -125,20 +129,18 @@ class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar> {
                 IconButton(
                   icon: const Icon(Icons.skip_previous),
                   tooltip: 'Previous',
-                  onPressed:
-                      state.hasPrevious ? () => player.previous() : null,
+                  onPressed: hasPrevious ? () => player.previous() : null,
                 ),
                 IconButton(
-                  icon: Icon(
-                      state.isPlaying ? Icons.pause : Icons.play_arrow,
+                  icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow,
                       size: 32),
-                  tooltip: state.isPlaying ? 'Pause' : 'Play',
+                  tooltip: isPlaying ? 'Pause' : 'Play',
                   onPressed: () => player.togglePlayPause(),
                 ),
                 IconButton(
                   icon: const Icon(Icons.skip_next),
                   tooltip: 'Next',
-                  onPressed: state.hasNext ? () => player.next() : null,
+                  onPressed: hasNext ? () => player.next() : null,
                 ),
                 IconButton(
                   icon: const Icon(Icons.stop),
@@ -147,55 +149,9 @@ class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar> {
                 ),
               ],
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: state.isLive
-                  ? Row(
-                      children: [
-                        Text('Live', style: theme.textTheme.bodySmall),
-                        const SizedBox(width: 8),
-                        const Expanded(child: LinearProgressIndicator()),
-                      ],
-                    )
-                  : duration == null
-                      // No duration and not live: no progress rule,
-                      // just the zero times. Never "Live" here.
-                      ? Row(
-                          children: [
-                            Text('0:00', style: theme.textTheme.bodySmall),
-                            const Expanded(child: SizedBox.shrink()),
-                            Text('0:00', style: theme.textTheme.bodySmall),
-                          ],
-                        )
-                      : Row(
-                          children: [
-                            Text(_formatDuration(position),
-                                style: theme.textTheme.bodySmall),
-                            Expanded(
-                              child: Slider(
-                                value: position.inMilliseconds
-                                    .toDouble()
-                                    .clamp(
-                                        0,
-                                        duration.inMilliseconds
-                                            .toDouble()),
-                                max: duration.inMilliseconds > 0
-                                    ? duration.inMilliseconds.toDouble()
-                                    : 1,
-                                onChanged: (value) => setState(() =>
-                                    _dragPosition = Duration(
-                                        milliseconds: value.round())),
-                                onChangeEnd: (value) {
-                                  setState(() => _dragPosition = null);
-                                  player.seek(
-                                      Duration(milliseconds: value.round()));
-                                },
-                              ),
-                            ),
-                            Text(_formatDuration(duration),
-                                style: theme.textTheme.bodySmall),
-                          ],
-                        ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: _MiniPlayerProgress(),
             ),
           ],
         ),
@@ -233,13 +189,104 @@ class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar> {
   }
 }
 
+/// The mini-player's progress row, kept as its own widget so a
+/// position tick rebuilds only this row: the strip above (cover,
+/// title, buttons) watches the track and the transport state, never
+/// the position.
+class _MiniPlayerProgress extends ConsumerStatefulWidget {
+  const _MiniPlayerProgress();
+
+  @override
+  ConsumerState<_MiniPlayerProgress> createState() =>
+      _MiniPlayerProgressState();
+}
+
+class _MiniPlayerProgressState
+    extends ConsumerState<_MiniPlayerProgress> {
+  /// Position the user is dragging the slider to; null when not
+  /// dragging (the row then shows the player's live position).
+  Duration? _dragPosition;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLive =
+        ref.watch(audioPlayerProvider.select((s) => s.isLive));
+    final duration =
+        ref.watch(audioPlayerProvider.select((s) => s.duration));
+    final livePosition =
+        ref.watch(audioPlayerProvider.select((s) => s.position));
+    final position = _dragPosition ?? livePosition;
+    final theme = Theme.of(context);
+    final player = ref.read(audioPlayerProvider.notifier);
+
+    if (isLive) {
+      return Row(
+        children: [
+          Text('Live', style: theme.textTheme.bodySmall),
+          const SizedBox(width: 8),
+          const Expanded(child: LinearProgressIndicator()),
+        ],
+      );
+    }
+    if (duration == null) {
+      // No duration and not live: no progress rule, just the zero
+      // times. Never "Live" here.
+      return Row(
+        children: [
+          Text('0:00', style: theme.textTheme.bodySmall),
+          const Expanded(child: SizedBox.shrink()),
+          Text('0:00', style: theme.textTheme.bodySmall),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        Text(_formatDuration(position),
+            style: theme.textTheme.bodySmall),
+        Expanded(
+          child: Slider(
+            value: position.inMilliseconds
+                .toDouble()
+                .clamp(0, duration.inMilliseconds.toDouble()),
+            max: duration.inMilliseconds > 0
+                ? duration.inMilliseconds.toDouble()
+                : 1,
+            onChanged: (value) => setState(() => _dragPosition =
+                Duration(milliseconds: value.round())),
+            onChangeEnd: (value) {
+              setState(() => _dragPosition = null);
+              player.seek(Duration(milliseconds: value.round()));
+            },
+          ),
+        ),
+        Text(_formatDuration(duration),
+            style: theme.textTheme.bodySmall),
+      ],
+    );
+  }
+}
+
 Widget _cover(Track track, MusicManDesignTokens? tokens) {
   final radius = tokens?.coverRadius ?? 2;
   if (track.imageUrl != null) {
+    // Disk-cached cover at about 2x the display size, so the strip
+    // never re-fetches or re-decodes at full resolution. While
+    // loading (or on error) it shows the same note mark as a
+    // missing cover.
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
-      child: Image.network(track.imageUrl!,
-          width: 56, height: 56, fit: BoxFit.cover),
+      child: CachedNetworkImage(
+        imageUrl: track.imageUrl!,
+        width: 56,
+        height: 56,
+        fit: BoxFit.cover,
+        memCacheWidth: 112,
+        memCacheHeight: 112,
+        placeholder: (context, _) =>
+            const Icon(Icons.music_note, size: 44),
+        errorWidget: (context, _, __) =>
+            const Icon(Icons.music_note, size: 44),
+      ),
     );
   }
   return const Icon(Icons.music_note, size: 44);

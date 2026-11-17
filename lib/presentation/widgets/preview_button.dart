@@ -26,19 +26,24 @@ class PreviewButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Watch the player state (not just read the notifier) so the icon
-    // rebuilds on play / pause / resolve transitions.
-    final playerState = ref.watch(audioPlayerProvider);
+    // Select only the playback fields this button renders, so a
+    // position tick never rebuilds it.
+    final isPlaying = ref.watch(
+        audioPlayerProvider.select((s) => s.isPlaying));
+    final currentKey = ref.watch(
+        audioPlayerProvider.select((s) => s.currentKey));
+    final isResolving = ref.watch(
+        audioPlayerProvider.select((s) => s.isResolving));
+    final resolvingKey = ref.watch(
+        audioPlayerProvider.select((s) => s.resolvingKey));
     final player = ref.read(audioPlayerProvider.notifier);
     // Same normalization as the player and the fallback layer, so the
     // playing key matches even for remaster-suffixed titles.
     final key =
         RecommendationEngine.normalizeKey(track.artist, track.title);
-    final isPlaying =
-        playerState.isPlaying && playerState.currentKey == key;
-    final isResolving =
-        playerState.isResolving && playerState.resolvingKey == key;
-    if (isResolving) {
+    final buttonIsPlaying = isPlaying && currentKey == key;
+    final buttonIsResolving = isResolving && resolvingKey == key;
+    if (buttonIsResolving) {
       return const Padding(
         padding: EdgeInsets.all(14),
         child: SizedBox(
@@ -50,9 +55,9 @@ class PreviewButton extends ConsumerWidget {
     }
 
     return IconButton(
-      icon: Icon(isPlaying ? Icons.pause : Icons.play_circle_outline,
-          color: isPlaying ? Theme.of(context).colorScheme.primary : null),
-      tooltip: isPlaying ? 'Pause full track' : 'Play full track',
+      icon: Icon(buttonIsPlaying ? Icons.pause : Icons.play_circle_outline,
+          color: buttonIsPlaying ? Theme.of(context).colorScheme.primary : null),
+      tooltip: buttonIsPlaying ? 'Pause full track' : 'Play full track',
       onPressed: () => player.play(track, queue: queue),
     );
   }

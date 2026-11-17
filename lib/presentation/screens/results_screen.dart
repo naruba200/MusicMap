@@ -326,6 +326,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     return GestureDetector(
       onTap: SwipeActionRow.closeAnyOpen,
       child: ListView.builder(
+        // Rows are built ahead while scrolling so a fling does not
+        // decode covers mid-frame; rows have variable height (the
+        // meta and reason lines are optional), so no fixed itemExtent.
+        scrollCacheExtent: const ScrollCacheExtent.pixels(480),
         itemCount: entries.length,
         itemBuilder: (ctx, i) {
           final (rank, scored) = entries[i];
@@ -339,24 +343,28 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                   (_) => WhyThisSongScreen(scored: scored),
                 ),
               );
-          return EditorialSongRow(
-            key: ValueKey('result-track-${RecommendationEngine.normalizeKey(scored.track.artist, scored.track.title)}'),
-            rank: rank + 1,
-            track: scored.track,
-            queue: queue,
-            reason: reason.isEmpty ? null : reason,
-            onReasonTap: onWhy,
-            onOverflow: () => showSongActionsSheet(
-              context,
-              scored.track,
+          // Each row paints in its own layer, so a playing-mark
+          // tick or a swipe on one row never repaints its neighbors.
+          return RepaintBoundary(
+            child: EditorialSongRow(
+              key: ValueKey('result-track-${RecommendationEngine.normalizeKey(scored.track.artist, scored.track.title)}'),
+              rank: rank + 1,
+              track: scored.track,
+              queue: queue,
               reason: reason.isEmpty ? null : reason,
-              onShowWhy: onWhy,
+              onReasonTap: onWhy,
+              onOverflow: () => showSongActionsSheet(
+                context,
+                scored.track,
+                reason: reason.isEmpty ? null : reason,
+                onShowWhy: onWhy,
+              ),
+              doubleTapToLike: true,
+              meta: isComplex ? _trackMeta(scored, enrichment) : null,
+              coverSize: isComplex ? 56 : 48,
+              swipeActionsEnabled: true,
+              onRemove: () => _removeResult(scored),
             ),
-            doubleTapToLike: true,
-            meta: isComplex ? _trackMeta(scored, enrichment) : null,
-            coverSize: isComplex ? 56 : 48,
-            swipeActionsEnabled: true,
-            onRemove: () => _removeResult(scored),
           );
         },
       ),
@@ -388,12 +396,17 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       );
     }
     return ListView.builder(
+      // Cards are built ahead while scrolling so a fling does not
+      // decode covers mid-frame.
+      scrollCacheExtent: const ScrollCacheExtent.pixels(480),
       itemCount: result.albums.length,
       itemBuilder: (ctx, i) {
         final album = result.albums[i];
         final enrichment = result.albumEnrichments[
             albumEnrichmentKey(album.artist, album.name)];
-        return _AlbumCard(album: album, enrichment: enrichment);
+        // Each card paints in its own layer, so an expand or a
+        // heart pop on one card never repaints its neighbors.
+        return RepaintBoundary(child: _AlbumCard(album: album, enrichment: enrichment));
       },
     );
   }

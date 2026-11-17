@@ -757,8 +757,12 @@ void main() {
       (tester) async {
     final player = await loadedPlayer();
     await pumpPlayer(tester, player);
-    expect(find.text('Song B'), findsOneWidget);
     const rowKey = ValueKey('queue-row:Singer B::Song B');
+    // The queue is a lazy sliver: scroll the row into view before
+    // asserting it exists.
+    await tester.scrollUntilVisible(find.byKey(rowKey), 300);
+    await tester.pump();
+    expect(find.text('Song B'), findsOneWidget);
 
     // The row sits below the fold: bring it on screen first, or
     // the drag starts outside the surface and hits nothing.

@@ -231,6 +231,10 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('Now playing'), findsOneWidget);
+      // The queue is a lazy sliver: scroll it into view before
+      // asserting it exists.
+      await tester.scrollUntilVisible(find.text('Queue'), 300);
+      await tester.pump();
       expect(find.text('Queue'), findsOneWidget);
     });
 
@@ -258,6 +262,10 @@ void main() {
         (tester) async {
       final player = await loadedPlayer();
       await pumpPlayer(tester, player);
+      // The queue is a lazy sliver: scroll the last row into view
+      // before asserting the rows exist.
+      await tester.scrollUntilVisible(find.text('Song C'), 300);
+      await tester.pump();
       expect(find.text('Now playing'), findsOneWidget);
       expect(find.text('Song A'), findsWidgets);
       expect(find.text('Song B'), findsOneWidget);
@@ -351,7 +359,16 @@ void main() {
       await tester.tap(find.text('Open player'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
+      // The queue is a lazy sliver: scroll it into view before
+      // asserting it exists.
+      await tester.scrollUntilVisible(find.text('Queue'), 300);
+      await tester.pump();
       expect(find.text('Queue'), findsOneWidget);
+      // The scroll above moved the cover off the top: bring it back
+      // into view before flinging down from it.
+      await tester.ensureVisible(
+          find.byKey(const ValueKey('player-cover')));
+      await tester.pump();
       await tester.fling(
         find.byKey(const ValueKey('player-cover')),
         const Offset(0, 400),
@@ -370,6 +387,10 @@ void main() {
           find.byKey(const ValueKey('queue-row:Singer A::Song A'));
       final rowB =
           find.byKey(const ValueKey('queue-row:Singer B::Song B'));
+      // The queue is a lazy sliver: scroll the second row into view
+      // before comparing row positions.
+      await tester.scrollUntilVisible(rowB, 300);
+      await tester.pump();
       expect(
         tester.getTopLeft(rowA).dy,
         lessThan(tester.getTopLeft(rowB).dy),
@@ -398,8 +419,12 @@ void main() {
     testWidgets('queue swipe-remove with Undo', (tester) async {
       final player = await loadedPlayer();
       await pumpPlayer(tester, player);
-      expect(find.text('Song B'), findsOneWidget);
       const rowKey = ValueKey('queue-row:Singer B::Song B');
+      // The queue is a lazy sliver: scroll the row into view before
+      // asserting it exists.
+      await tester.scrollUntilVisible(find.byKey(rowKey), 300);
+      await tester.pump();
+      expect(find.text('Song B'), findsOneWidget);
       await tester.ensureVisible(find.byKey(rowKey));
       await tester.pump();
       // Swipe the row left to reveal Remove (a swipe alone only
@@ -448,6 +473,10 @@ void main() {
         (tester) async {
       final player = await loadedPlayer();
       await pumpPlayer(tester, player, design: AppDesign.complex);
+      // The queue and the picks are lazy slivers: scroll the picks
+      // into view before asserting them.
+      await tester.scrollUntilVisible(find.text('Related picks'), 300);
+      await tester.pump();
       expect(find.text('Related picks'), findsOneWidget);
       // Song B and Song C each appear twice: once in the queue, once
       // in related picks.

@@ -35,7 +35,7 @@ abstract final class AppTheme {
     final p = name.palette;
     final brightness =
         name.isDark ? Brightness.dark : Brightness.light;
-    final textTheme = _textTheme(p, brightness);
+    final textTheme = _textTheme(name);
 
     return ThemeData(
       brightness: brightness,
@@ -338,7 +338,29 @@ abstract final class AppTheme {
   /// call: google_fonts picks the font variant per style from its
   /// weight, so weighting after would leave every style on the
   /// regular variant and headlines would render faux-bold.
-  static TextTheme _textTheme(MusicManPalette p, Brightness brightness) {
+  ///
+  /// The built TextTheme is cached per named theme: themeData runs
+  /// on every appearance rebuild, and re-running the GoogleFonts
+  /// call each time rebuilds fifteen styles for nothing. A named
+  /// theme's palette never changes, so the cache key is the name.
+  static final Map<AppThemeName, TextTheme> _textThemeCache = {};
+
+  /// Number of cached TextThemes, for tests: repeated themeData
+  /// calls for one named theme must not grow this.
+  @visibleForTesting
+  static int get textThemeCacheSize => _textThemeCache.length;
+
+  static TextTheme _textTheme(AppThemeName name) {
+    return _textThemeCache.putIfAbsent(name, () {
+      final p = name.palette;
+      final brightness =
+          name.isDark ? Brightness.dark : Brightness.light;
+      return _buildTextTheme(p, brightness);
+    });
+  }
+
+  static TextTheme _buildTextTheme(
+      MusicManPalette p, Brightness brightness) {
     const tabular = [FontFeature.tabularFigures()];
     final base = ThemeData(brightness: brightness).textTheme;
     final weighted = base.copyWith(
@@ -384,17 +406,46 @@ abstract final class AppTheme {
     );
   }
 
+  /// Fetch the Archivo weights and the Noto Sans JP stamp weight
+  /// once, before the first frame, so a weight never fetches over
+  /// the network in the middle of a theme change or a first render.
+  /// google_fonts caches the files on-device after the first fetch,
+  /// so later launches read them from disk. The caller awaits this
+  /// best-effort: a failed fetch throws from pendingFonts, and the
+  /// app must fall back to the platform font instead of dying.
+  static Future<void> warmFonts() async {
+    for (final weight in const [
+      FontWeight.w400,
+      FontWeight.w500,
+      FontWeight.w600,
+      FontWeight.w700,
+      FontWeight.w800,
+    ]) {
+      GoogleFonts.archivo(fontWeight: weight);
+    }
+    GoogleFonts.notoSansJp(fontWeight: FontWeight.w700);
+    await GoogleFonts.pendingFonts();
+  }
+
   /// The stamp kanji style (DESIGN.md: Identity motif): Noto Sans JP
   /// 700 inside a small accent square, one kanji per screen section.
   /// Used by Phase B screens; defined here so the family lives in
-  /// one place.
+  /// one place. The base style is cached per size and only the color
+  /// is applied per call, so a stamp never re-runs the GoogleFonts
+  /// lookup per build.
+  static final Map<double, TextStyle> _stampStyleCache = {};
+
   static TextStyle stampKanjiStyle({
     required Color color,
     double fontSize = 16,
-  }) =>
-      GoogleFonts.notoSansJp(
+  }) {
+    final base = _stampStyleCache.putIfAbsent(
+      fontSize,
+      () => GoogleFonts.notoSansJp(
         fontWeight: FontWeight.w700,
         fontSize: fontSize,
-        color: color,
-      );
+      ),
+    );
+    return base.copyWith(color: color);
+  }
 }

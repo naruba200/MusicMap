@@ -17,6 +17,7 @@
 
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // material_ui exports Flutter's RepeatMode (animation repeat); the
@@ -124,8 +125,11 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(audioPlayerProvider);
-    final track = state.currentTrack;
+    // Select only the current track: a position tick must not
+    // rebuild this screen (the progress rule below watches the
+    // position on its own).
+    final track =
+        ref.watch(audioPlayerProvider.select((s) => s.currentTrack));
     final theme = Theme.of(context);
     final tokens = theme.extension<MusicManDesignTokens>();
 
@@ -167,19 +171,17 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
                 ),
               ),
             )
-          : _PlayerBody(state: state, track: track, tokens: tokens),
+          : _PlayerBody(track: track, tokens: tokens),
     );
   }
 }
 
 class _PlayerBody extends ConsumerWidget {
   const _PlayerBody({
-    required this.state,
     required this.track,
     required this.tokens,
   });
 
-  final PlaybackState state;
   final Track track;
   final MusicManDesignTokens? tokens;
 
@@ -189,22 +191,38 @@ class _PlayerBody extends ConsumerWidget {
     final theme = Theme.of(context);
     final source = player.streamSourceFor(track);
     final metaLine = track.album ?? source;
+    // The transport rows watch only the fields they render. The
+    // progress rule and the queue are separate widgets below, so a
+    // position tick rebuilds neither this body nor the queue.
+    final isPlaying =
+        ref.watch(audioPlayerProvider.select((s) => s.isPlaying));
+    final hasPrevious =
+        ref.watch(audioPlayerProvider.select((s) => s.hasPrevious));
+    final hasNext =
+        ref.watch(audioPlayerProvider.select((s) => s.hasNext));
+    final shuffleEnabled = ref.watch(
+        audioPlayerProvider.select((s) => s.shuffleEnabled));
+    final repeatMode =
+        ref.watch(audioPlayerProvider.select((s) => s.repeatMode));
 
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _DismissHeader(
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: _DismissHeader(
             track: track,
             tokens: tokens,
             metaLine: metaLine,
             onDismiss: () => Navigator.of(context).pop(),
           ),
-          const Padding(
+        ),
+        const SliverToBoxAdapter(
+          child: Padding(
             padding: EdgeInsets.fromLTRB(20, 8, 20, 0),
             child: _ScrubProgress(),
           ),
-          Padding(
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
             padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -212,14 +230,13 @@ class _PlayerBody extends ConsumerWidget {
                 IconButton(
                   icon: const Icon(Icons.skip_previous),
                   tooltip: 'Previous',
-                  onPressed:
-                      state.hasPrevious ? () => player.previous() : null,
+                  onPressed: hasPrevious ? () => player.previous() : null,
                 ),
                 IconButton(
                   icon: Icon(
-                      state.isPlaying ? Icons.pause : Icons.play_arrow,
+                      isPlaying ? Icons.pause : Icons.play_arrow,
                       size: 32),
-                  tooltip: state.isPlaying ? 'Pause' : 'Play',
+                  tooltip: isPlaying ? 'Pause' : 'Play',
                   onPressed: () => player.togglePlayPause(),
                   style: IconButton.styleFrom(
                     backgroundColor: theme.colorScheme.primary,
@@ -229,7 +246,7 @@ class _PlayerBody extends ConsumerWidget {
                 IconButton(
                   icon: const Icon(Icons.skip_next),
                   tooltip: 'Next',
-                  onPressed: state.hasNext ? () => player.next() : null,
+                  onPressed: hasNext ? () => player.next() : null,
                 ),
                 IconButton(
                   icon: const Icon(Icons.stop),
@@ -239,7 +256,9 @@ class _PlayerBody extends ConsumerWidget {
               ],
             ),
           ),
-          Padding(
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -247,25 +266,25 @@ class _PlayerBody extends ConsumerWidget {
                 IconButton(
                   icon: Icon(
                     Icons.shuffle,
-                    color: state.shuffleEnabled
+                    color: shuffleEnabled
                         ? theme.colorScheme.primary
                         : null,
                   ),
                   tooltip:
-                      state.shuffleEnabled ? 'Shuffle on' : 'Shuffle off',
+                      shuffleEnabled ? 'Shuffle on' : 'Shuffle off',
                   onPressed: () => player.toggleShuffle(),
                 ),
                 _LikeButton(track: track),
                 IconButton(
                   icon: Icon(
-                    state.repeatMode == RepeatMode.one
+                    repeatMode == RepeatMode.one
                         ? Icons.repeat_one
                         : Icons.repeat,
-                    color: state.repeatMode == RepeatMode.off
+                    color: repeatMode == RepeatMode.off
                         ? null
                         : theme.colorScheme.primary,
                   ),
-                  tooltip: switch (state.repeatMode) {
+                  tooltip: switch (repeatMode) {
                     RepeatMode.off => 'Repeat off',
                     RepeatMode.all => 'Repeat all',
                     RepeatMode.one => 'Repeat one',
@@ -280,66 +299,22 @@ class _PlayerBody extends ConsumerWidget {
               ],
             ),
           ),
-          Padding(
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
             child: Text('Queue', style: theme.textTheme.titleMedium),
           ),
-          ReorderableListView.builder(
-            key: const ValueKey('queue-list'),
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            // The grip handle is the drag path; the default whole-row
-            // handles stay off so a horizontal swipe on a row removes
-            // it instead of starting a reorder.
-            buildDefaultDragHandles: false,
-            itemCount: state.queue.length,
-            // onReorderItem hands over the final index already
-            // adjusted for the removed row, so no manual fix-up.
-            onReorderItem: (oldIndex, newIndex) {
-              player.moveInQueue(oldIndex, newIndex);
-            },
-            itemBuilder: (context, index) {
-              final item = state.queue[index];
-              final isCurrent = index == state.queueIndex;
-              // Swipe to remove through the shared swipe row, not a
-              // Dismissible: Dismissible asserts on zero durations,
-              // so it can never be MOTION 0 in Compact. The swipe
-              // row slides the reveal in Complex and applies it
-              // instantly in Compact, with the same Undo toast.
-              return SwipeActionRow(
-                key: ValueKey('queue-row:${item.artist}::${item.title}'),
-                actions: [
-                  SwipeAction(
-                    label: 'Remove',
-                    icon: Icons.delete_outline,
-                    onTap: () =>
-                        _removeFromQueue(context, ref, index, item),
-                  ),
-                ],
-                child: _QueueRow(
-                  track: item,
-                  index: index,
-                  isCurrent: isCurrent,
-                  queueLength: state.queue.length,
-                  duration: _rowDuration(item, isCurrent, state),
-                ),
-              );
-            },
-          ),
-          if (tokens?.design == AppDesign.complex &&
-              state.queue.length >= 2)
-            _RelatedPicks(state: state),
-          const SizedBox(height: 24),
-        ],
-      ),
+        ),
+        const _QueueSliver(),
+        const SliverToBoxAdapter(
+          child: _RelatedPicks(),
+        ),
+        const SliverToBoxAdapter(
+          child: SizedBox(height: 24),
+        ),
+      ],
     );
-  }
-
-  Duration? _rowDuration(Track item, bool isCurrent, PlaybackState state) {
-    if (item.durationMs != null) {
-      return Duration(milliseconds: item.durationMs!);
-    }
-    return isCurrent ? state.duration : null;
   }
 
   Future<void> _addToPlaylist(
@@ -366,29 +341,92 @@ class _PlayerBody extends ConsumerWidget {
       },
     );
   }
+}
 
-  /// Remove the row, with an Undo toast that puts the track back where
-  /// it was. Undo restores the queue entry; when the removed track was
-  /// the playing one, playback has already advanced and is not rewound.
-  Future<void> _removeFromQueue(
-    BuildContext context,
-    WidgetRef ref,
-    int index,
-    Track track,
-  ) async {
+/// The queue as a sliver, isolated from the rest of the player body:
+/// only the queue rows rebuild on a queue change, and rows are built
+/// lazily as they scroll into view instead of all at once on every
+/// rebuild (the old shrink-wrapped list inside a scroll view built
+/// and laid out every row on every tick).
+class _QueueSliver extends ConsumerWidget {
+  const _QueueSliver();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final queue =
+        ref.watch(audioPlayerProvider.select((s) => s.queue));
+    final queueIndex =
+        ref.watch(audioPlayerProvider.select((s) => s.queueIndex));
+    final duration =
+        ref.watch(audioPlayerProvider.select((s) => s.duration));
     final player = ref.read(audioPlayerProvider.notifier);
-    await player.removeFromQueue(index);
-    if (!context.mounted) return;
-    showUndoSnackBar(
-      context,
-      message: 'Removed ${track.title}',
-      onUndo: () {
-        player.addToQueue(track);
-        final last = ref.read(audioPlayerProvider).queue.length - 1;
-        if (last > index) player.moveInQueue(last, index);
+    return SliverReorderableList(
+      itemCount: queue.length,
+      // onReorderItem hands over the final index already
+      // adjusted for the removed row, so no manual fix-up.
+      onReorderItem: (oldIndex, newIndex) {
+        player.moveInQueue(oldIndex, newIndex);
+      },
+      itemBuilder: (context, index) {
+        final item = queue[index];
+        final isCurrent = index == queueIndex;
+        // Swipe to remove through the shared swipe row, not a
+        // Dismissible: Dismissible asserts on zero durations,
+        // so it can never be MOTION 0 in Compact. The swipe
+        // row slides the reveal in Complex and applies it
+        // instantly in Compact, with the same Undo toast.
+        return SwipeActionRow(
+          key: ValueKey('queue-row:${item.artist}::${item.title}'),
+          actions: [
+            SwipeAction(
+              label: 'Remove',
+              icon: Icons.delete_outline,
+              onTap: () =>
+                  _removeFromQueue(context, ref, index, item),
+            ),
+          ],
+          child: _QueueRow(
+            track: item,
+            index: index,
+            isCurrent: isCurrent,
+            queueLength: queue.length,
+            duration: _rowDuration(item, isCurrent, duration),
+          ),
+        );
       },
     );
   }
+}
+
+Duration? _rowDuration(
+    Track item, bool isCurrent, Duration? currentDuration) {
+  if (item.durationMs != null) {
+    return Duration(milliseconds: item.durationMs!);
+  }
+  return isCurrent ? currentDuration : null;
+}
+
+/// Remove the row, with an Undo toast that puts the track back where
+/// it was. Undo restores the queue entry; when the removed track was
+/// the playing one, playback has already advanced and is not rewound.
+Future<void> _removeFromQueue(
+  BuildContext context,
+  WidgetRef ref,
+  int index,
+  Track track,
+) async {
+  final player = ref.read(audioPlayerProvider.notifier);
+  await player.removeFromQueue(index);
+  if (!context.mounted) return;
+  showUndoSnackBar(
+    context,
+    message: 'Removed ${track.title}',
+    onUndo: () {
+      player.addToQueue(track);
+      final last = ref.read(audioPlayerProvider).queue.length - 1;
+      if (last > index) player.moveInQueue(last, index);
+    },
+  );
 }
 
 /// Header: drag handle, big cover, title, artist, album or source line.
@@ -416,6 +454,36 @@ class _DismissHeader extends StatefulWidget {
 class _DismissHeaderState extends State<_DismissHeader> {
   static const _dismissThreshold = 100.0;
   double _dragDy = 0;
+
+  /// The cover URL (with its decode size) already warmed, so a
+  /// rebuild or a reopen of the same track never re-precaches.
+  String? _precachedKey;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final url = widget.track.imageUrl;
+    if (url == null) return;
+    final coverSize =
+        (MediaQuery.sizeOf(context).width - 48).clamp(0.0, 320.0);
+    final memCache = (coverSize * 2).round();
+    final key = '$url@$memCache';
+    if (key == _precachedKey) return;
+    _precachedKey = key;
+    // Warm the full-size decode before the first frame, so the big
+    // cover does not flash its placeholder when the player opens
+    // from the 56 px mini-player thumb. Same provider (same
+    // maxWidth/maxHeight) as the cover below, so the warmed entry
+    // is the one the cover reads.
+    precacheImage(
+      CachedNetworkImageProvider(
+        url,
+        maxWidth: memCache,
+        maxHeight: memCache,
+      ),
+      context,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -467,11 +535,23 @@ class _DismissHeaderState extends State<_DismissHeader> {
                       borderRadius: BorderRadius.circular(
                           widget.tokens?.coverRadius ?? 2),
                       child: widget.track.imageUrl != null
-                          ? Image.network(
-                              widget.track.imageUrl!,
+                          ? CachedNetworkImage(
+                              imageUrl: widget.track.imageUrl!,
                               width: coverSize,
                               height: coverSize,
                               fit: BoxFit.cover,
+                              memCacheWidth: (coverSize * 2).round(),
+                              memCacheHeight: (coverSize * 2).round(),
+                              placeholder: (context, _) => Container(
+                                color: theme.colorScheme.surface,
+                                child: const Icon(Icons.music_note,
+                                    size: 96),
+                              ),
+                              errorWidget: (context, _, __) => Container(
+                                color: theme.colorScheme.surface,
+                                child: const Icon(Icons.music_note,
+                                    size: 96),
+                              ),
                             )
                           : Container(
                               color: theme.colorScheme.surface,
@@ -615,14 +695,23 @@ class _ScrubProgressState extends ConsumerState<_ScrubProgress> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(audioPlayerProvider);
+    // Select only the progress fields this rule renders, so a
+    // position tick rebuilds this rule and nothing else on the
+    // screen (not the header, the queue, or the transport rows).
+    final isLive =
+        ref.watch(audioPlayerProvider.select((s) => s.isLive));
+    final duration =
+        ref.watch(audioPlayerProvider.select((s) => s.duration));
+    final livePosition =
+        ref.watch(audioPlayerProvider.select((s) => s.position));
+    final liveFraction = ref.watch(
+        audioPlayerProvider.select((s) => s.progressFraction));
     final theme = Theme.of(context);
     final tokens = theme.extension<MusicManDesignTokens>();
     final micro = tokens?.micro ?? Duration.zero;
     final tick = tokens?.progressTick ?? Duration.zero;
-    final duration = state.duration;
 
-    if (state.isLive) {
+    if (isLive) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
         child: Row(
@@ -660,8 +749,8 @@ class _ScrubProgressState extends ConsumerState<_ScrubProgress> {
         : Duration(
             milliseconds:
                 (_scrubFraction! * duration.inMilliseconds).round());
-    final position = scrubPosition ?? state.position;
-    final fraction = _scrubFraction ?? state.progressFraction;
+    final position = scrubPosition ?? livePosition;
+    final fraction = _scrubFraction ?? liveFraction;
     final scrubbing = _scrubFraction != null;
 
     return Column(
@@ -812,8 +901,18 @@ class _QueueRow extends ConsumerWidget {
               child: track.imageUrl != null
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(2),
-                      child: Image.network(track.imageUrl!,
-                          width: 40, height: 40, fit: BoxFit.cover),
+                      child: CachedNetworkImage(
+                        imageUrl: track.imageUrl!,
+                        width: 40,
+                        height: 40,
+                        fit: BoxFit.cover,
+                        memCacheWidth: 80,
+                        memCacheHeight: 80,
+                        placeholder: (context, _) =>
+                            const Icon(Icons.music_note, size: 32),
+                        errorWidget: (context, _, __) =>
+                            const Icon(Icons.music_note, size: 32),
+                      ),
                     )
                   : const Icon(Icons.music_note, size: 32),
             ),
@@ -878,20 +977,27 @@ class _QueueRow extends ConsumerWidget {
 }
 
 /// Related picks, Complex only: the other tracks in the current queue,
-/// real data only. Hidden when the queue has fewer than 2 tracks (the
-/// caller gates on that).
+/// real data only. Hidden when the design is not Complex or the queue
+/// has fewer than 2 tracks. Watches the queue alone, so a position
+/// tick never rebuilds it.
 class _RelatedPicks extends ConsumerWidget {
-  const _RelatedPicks({required this.state});
-
-  final PlaybackState state;
+  const _RelatedPicks();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final tokens = Theme.of(context).extension<MusicManDesignTokens>();
+    final queue =
+        ref.watch(audioPlayerProvider.select((s) => s.queue));
+    final queueIndex =
+        ref.watch(audioPlayerProvider.select((s) => s.queueIndex));
+    if (tokens?.design != AppDesign.complex || queue.length < 2) {
+      return const SizedBox.shrink();
+    }
     final theme = Theme.of(context);
     final player = ref.read(audioPlayerProvider.notifier);
     final others = [
-      for (var i = 0; i < state.queue.length; i++)
-        if (i != state.queueIndex) (index: i, track: state.queue[i]),
+      for (var i = 0; i < queue.length; i++)
+        if (i != queueIndex) (index: i, track: queue[i]),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -907,8 +1013,18 @@ class _RelatedPicks extends ConsumerWidget {
             leading: entry.track.imageUrl != null
                 ? ClipRRect(
                     borderRadius: BorderRadius.circular(2),
-                    child: Image.network(entry.track.imageUrl!,
-                        width: 40, height: 40, fit: BoxFit.cover),
+                    child: CachedNetworkImage(
+                      imageUrl: entry.track.imageUrl!,
+                      width: 40,
+                      height: 40,
+                      fit: BoxFit.cover,
+                      memCacheWidth: 80,
+                      memCacheHeight: 80,
+                      placeholder: (context, _) =>
+                          const Icon(Icons.music_note, size: 32),
+                      errorWidget: (context, _, __) =>
+                          const Icon(Icons.music_note, size: 32),
+                    ),
                   )
                 : const Icon(Icons.music_note, size: 32),
             title: Text(entry.track.title,

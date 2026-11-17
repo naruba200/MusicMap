@@ -28,6 +28,18 @@ Future<void> main() async {
   await runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 
+    // Warm the display fonts before the first frame: a weight that
+    // has never rendered fetches over the network on first use,
+    // which stalls a theme change or a first render mid-animation.
+    // Best effort and time-boxed: on a slow or failed fetch the app
+    // starts anyway with the platform fallback, and google_fonts
+    // retries the fetch on first use.
+    try {
+      await AppTheme.warmFonts().timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // Font warming never blocks startup.
+    }
+
     // Show a readable error screen instead of dying silently, so a
     // startup failure can be reported with the actual error attached.
     FlutterError.onError = (details) {

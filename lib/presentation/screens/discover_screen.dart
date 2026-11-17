@@ -716,7 +716,14 @@ class _JamendoRadiosView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final radios = ref.watch(jamendoRadiosProvider);
-    final playerState = ref.watch(audioPlayerProvider);
+    // Select only the playback fields these rows render, so a
+    // position tick never rebuilds the whole radios list.
+    final isPlaying = ref.watch(
+        audioPlayerProvider.select((s) => s.isPlaying));
+    final currentKey = ref.watch(
+        audioPlayerProvider.select((s) => s.currentKey));
+    final isResolving = ref.watch(
+        audioPlayerProvider.select((s) => s.isResolving));
     final player = ref.read(audioPlayerProvider.notifier);
     return radios.when(
       data: (load) {
@@ -764,8 +771,8 @@ class _JamendoRadiosView extends ConsumerWidget {
                   subtitle: const Text('From Jamendo · radio'),
                   trailing: IconButton(
                     icon: Icon(
-                      playerState.isPlaying &&
-                              playerState.currentKey ==
+                      isPlaying &&
+                              currentKey ==
                                   RecommendationEngine.normalizeKey(
                                       'Jamendo Radio', radio.name)
                           ? Icons.pause
@@ -778,10 +785,10 @@ class _JamendoRadiosView extends ConsumerWidget {
                         imageUrl: radio.imageUrl,
                         platformTrackId: 'radio:${radio.id}',
                       );
-                      if (playerState.currentKey ==
+                      if (currentKey ==
                               RecommendationEngine.normalizeKey(
                                   'Jamendo Radio', radio.name) &&
-                          !playerState.isResolving) {
+                          !isResolving) {
                         await player.togglePlayPause();
                         return;
                       }

@@ -26,6 +26,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
@@ -327,15 +328,21 @@ class _EditorialSongRowState extends ConsumerState<EditorialSongRow> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final track = widget.track;
-    final playback = ref.watch(audioPlayerProvider);
+    // Select only the playback fields this row renders: a position
+    // tick must not rebuild every row on every kept-alive tab.
+    final currentKey = ref.watch(
+        audioPlayerProvider.select((s) => s.currentKey));
+    final isResolving = ref.watch(
+        audioPlayerProvider.select((s) => s.isResolving));
+    final resolvingKey = ref.watch(
+        audioPlayerProvider.select((s) => s.resolvingKey));
     // Rebuild when a favorite toggles so the swipe Like icon stays
     // honest (the heart button itself rebuilds via setState).
     ref.watch(favoritesVersionProvider);
     final key =
         RecommendationEngine.normalizeKey(track.artist, track.title);
-    final isCurrent = playback.currentKey == key;
-    final isResolving =
-        playback.isResolving && playback.resolvingKey == key;
+    final isCurrent = currentKey == key;
+    final rowIsResolving = isResolving && resolvingKey == key;
     final tokens = Theme.of(context).extension<MusicManDesignTokens>();
     final animatePlaying =
         tokens?.design == AppDesign.complex && isCurrent;
@@ -349,7 +356,7 @@ class _EditorialSongRowState extends ConsumerState<EditorialSongRow> {
           children: [
             SizedBox(
               width: 24,
-              child: isResolving
+              child: rowIsResolving
                   ? SizedBox(
                       width: 16,
                       height: 16,
@@ -603,14 +610,22 @@ class _CoverThumb extends StatelessWidget {
       ),
     );
     if (url == null || url.isEmpty) return placeholder;
+    // Disk-cached cover at about 2x the display size, so a scroll
+    // back never re-fetches or re-decodes at full resolution. While
+    // loading (or on error) the row shows the same plain tile as a
+    // missing cover, never a broken image icon.
+    final memCache = (size * 2).round();
     return ClipRRect(
       borderRadius: BorderRadius.circular(2),
-      child: Image.network(
-        url,
+      child: CachedNetworkImage(
+        imageUrl: url,
         width: size,
         height: size,
         fit: BoxFit.cover,
-        errorBuilder: (context, _, __) => placeholder,
+        memCacheWidth: memCache,
+        memCacheHeight: memCache,
+        placeholder: (context, _) => placeholder,
+        errorWidget: (context, _, __) => placeholder,
       ),
     );
   }

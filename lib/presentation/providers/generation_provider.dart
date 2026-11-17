@@ -1358,6 +1358,12 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   /// set a client_id (see [audioPlayerProvider]).
   final Map<String, String> _streamSource = {};
 
+  /// Position ticks are rounded to this grid before they reach the
+  /// state, so the player notifies at most 4 times a second instead
+  /// of on every audioplayers event (several per second). Seeks set
+  /// the exact position directly and are never rounded.
+  static const positionStep = Duration(milliseconds: 250);
+
   AudioPlayerNotifier(FallbackSources fallbacks,
       {AudioBackend? backend,
       AudiusClient? audiusClient,
@@ -1399,7 +1405,17 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
     });
     _positionSub = _audio.onPositionChanged.listen((pos) {
       if (!state.hasCurrentTrack) return;
-      state = state.copyWith(position: pos);
+      // Round the tick to the 250 ms grid and drop it when the
+      // rounded value has not moved: audioplayers fires several
+      // times a second, and every state assignment rebuilds every
+      // widget watching the player (every song row on every
+      // kept-alive tab). Rounding plus the dedupe below caps
+      // position notifications at 4 per second.
+      final step = positionStep.inMilliseconds;
+      final rounded = Duration(
+          milliseconds: (pos.inMilliseconds / step).round() * step);
+      if (rounded == state.position) return;
+      state = state.copyWith(position: rounded);
     });
     _durationSub = _audio.onDurationChanged.listen((d) {
       if (!state.hasCurrentTrack) return;
