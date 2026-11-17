@@ -30,6 +30,7 @@ import '../../data/models/music_models.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
 import '../widgets/add_to_playlist_sheet.dart';
+import '../widgets/album_art.dart' show coverUrlFor;
 import '../widgets/swipe_action_row.dart';
 import '../widgets/undo_snackbar.dart';
 
@@ -204,6 +205,11 @@ class _PlayerBody extends ConsumerWidget {
         audioPlayerProvider.select((s) => s.shuffleEnabled));
     final repeatMode =
         ref.watch(audioPlayerProvider.select((s) => s.repeatMode));
+    // Album art for a track with no cover of its own, when the
+    // caller that started playback knew the album. Null elsewhere:
+    // the big cover stays the plain note tile.
+    final albumArtUrl = ref.watch(
+        audioPlayerProvider.select((s) => s.currentAlbumArtUrl));
 
     return CustomScrollView(
       slivers: [
@@ -212,6 +218,7 @@ class _PlayerBody extends ConsumerWidget {
             track: track,
             tokens: tokens,
             metaLine: metaLine,
+            fallbackImageUrl: albumArtUrl,
             onDismiss: () => Navigator.of(context).pop(),
           ),
         ),
@@ -440,12 +447,17 @@ class _DismissHeader extends StatefulWidget {
     required this.tokens,
     required this.metaLine,
     required this.onDismiss,
+    this.fallbackImageUrl,
   });
 
   final Track track;
   final MusicManDesignTokens? tokens;
   final String? metaLine;
   final VoidCallback onDismiss;
+
+  /// Album art for a track with no cover of its own, passed in with
+  /// playback. Null keeps the plain note tile.
+  final String? fallbackImageUrl;
 
   @override
   State<_DismissHeader> createState() => _DismissHeaderState();
@@ -462,7 +474,10 @@ class _DismissHeaderState extends State<_DismissHeader> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final url = widget.track.imageUrl;
+    final url = coverUrlFor(
+      imageUrl: widget.track.imageUrl,
+      fallbackImageUrl: widget.fallbackImageUrl,
+    );
     if (url == null) return;
     final coverSize =
         (MediaQuery.sizeOf(context).width - 48).clamp(0.0, 320.0);
@@ -490,6 +505,12 @@ class _DismissHeaderState extends State<_DismissHeader> {
     final theme = Theme.of(context);
     final coverSize =
         (MediaQuery.sizeOf(context).width - 48).clamp(0.0, 320.0);
+    // Chain: the track's own cover, then the album art passed in
+    // with playback, then the plain note tile.
+    final coverUrl = coverUrlFor(
+      imageUrl: widget.track.imageUrl,
+      fallbackImageUrl: widget.fallbackImageUrl,
+    );
 
     return Listener(
       onPointerDown: (_) => _dragDy = 0,
@@ -534,9 +555,9 @@ class _DismissHeaderState extends State<_DismissHeader> {
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(
                           widget.tokens?.coverRadius ?? 2),
-                      child: widget.track.imageUrl != null
+                      child: coverUrl != null
                           ? CachedNetworkImage(
-                              imageUrl: widget.track.imageUrl!,
+                              imageUrl: coverUrl,
                               width: coverSize,
                               height: coverSize,
                               fit: BoxFit.cover,

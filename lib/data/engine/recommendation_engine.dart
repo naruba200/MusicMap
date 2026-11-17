@@ -471,15 +471,32 @@ class RecommendationEngine {
     final recs = groups.entries.map((e) {
       final songs = e.value..sort((a, b) => b.score.compareTo(a.score));
       final first = songs.first.track;
+      final artUrl = songs
+          .map((s) => s.track.imageUrl)
+          .firstWhere((u) => u != null && u.isNotEmpty, orElse: () => null);
+      // Album-cover-as-song-cover backfill: a member track with no
+      // cover of its own shows the album art instead (new runs only;
+      // stored runs keep the tracks they were saved with). No new
+      // field on Track, so no Hive migration: imageUrl carries it.
+      final backfilled = artUrl == null
+          ? songs
+          : [
+              for (final s in songs)
+                s.track.imageUrl == null || s.track.imageUrl!.isEmpty
+                    ? ScoredTrack(
+                        track: s.track.copyWith(imageUrl: artUrl),
+                        score: s.score,
+                        reasons: s.reasons,
+                      )
+                    : s,
+            ];
       return AlbumRec(
         name: first.album!,
         artist: first.artist,
-        artUrl: songs
-            .map((s) => s.track.imageUrl)
-            .firstWhere((u) => u != null && u.isNotEmpty, orElse: () => null),
+        artUrl: artUrl,
         songCount: songs.length,
         bestScore: songs.first.score,
-        songs: songs,
+        songs: backfilled,
       );
     }).toList();
     recs.sort((a, b) {

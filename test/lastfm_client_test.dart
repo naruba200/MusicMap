@@ -263,6 +263,79 @@ void main() {
       expect(info.imageUrl, 'big.jpg');
     });
 
+    test('getAlbumInfo hits album.getInfo and parses the tracklist',
+        () async {
+      String? method;
+      final client = clientFor(
+        (_) => {
+          'album': {
+            'name': 'Discovery',
+            'artist': 'Daft Punk',
+            'image': [
+              {'#text': 'small.jpg', 'size': 'small'},
+              {'#text': 'big.jpg', 'size': 'extralarge'},
+            ],
+            'tracks': {
+              'track': [
+                {
+                  'name': 'One More Time',
+                  'duration': '320',
+                  'artist': {'name': 'Daft Punk'},
+                },
+                {
+                  'name': 'Aerodynamic',
+                  'duration': '212',
+                  'artist': 'Daft Punk',
+                },
+              ],
+            },
+          }
+        },
+        onMethod: (m) => method = m,
+      );
+      final info = await client.getAlbumInfo('Daft Punk', 'Discovery');
+      expect(method, 'album.getInfo');
+      expect(info.name, 'Discovery');
+      expect(info.artist, 'Daft Punk');
+      expect(info.imageUrl, 'big.jpg');
+      expect(info.tracks.length, 2);
+      expect(info.tracks[0].name, 'One More Time');
+      expect(info.tracks[0].durationMs, 320000);
+      expect(info.tracks[1].artist, 'Daft Punk');
+    });
+
+    test('getAlbumInfo accepts a single track object and empty tracks',
+        () async {
+      final single = clientFor((_) => {
+            'album': {
+              'name': 'Solo',
+              'artist': 'One',
+              'tracks': {
+                'track': {'name': 'Only', 'duration': '60'}
+              },
+            }
+          });
+      final one = await single.getAlbumInfo('One', 'Solo');
+      expect(one.tracks.length, 1);
+      expect(one.tracks.single.name, 'Only');
+      expect(one.tracks.single.artist, 'One');
+      expect(one.tracks.single.durationMs, 60000);
+
+      final empty = clientFor((_) => {
+            'album': {'name': 'Blank', 'artist': 'No One'}
+          });
+      final none = await empty.getAlbumInfo('No One', 'Blank');
+      expect(none.tracks, isEmpty);
+      expect(none.imageUrl, isNull);
+    });
+
+    test('AlbumTrack drops a zero duration and keeps the name', () {
+      final t = AlbumTrack.fromJson(
+          {'name': 'Intro', 'artist': 'A', 'duration': '0'});
+      expect(t.durationMs, isNull);
+      expect(t.name, 'Intro');
+    });
+
     test('an error envelope throws LastFmException', () async {
       final client =
           clientFor((_) => {'error': 6, 'message': 'Track not found'});

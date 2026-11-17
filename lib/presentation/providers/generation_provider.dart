@@ -1175,6 +1175,15 @@ class PlaybackState {
   /// Track currently loaded (playing or paused). Null when stopped.
   final Track? currentTrack;
 
+  /// Album art to show for [currentTrack] when the track itself has
+  /// no cover (Group 4, part 3): the album art the caller passed in
+  /// with play(), or null. A playing Track carries no album id, so
+  /// the mini-player and full player can only use this when the
+  /// caller knew the album context; everywhere else the placeholder
+  /// tile stays. Cleared whenever the queue advances to a track
+  /// played without album context.
+  final String? currentAlbumArtUrl;
+
   /// Play queue: the list the current track was played from, so
   /// next/previous work across screens. Empty when nothing is loaded.
   final List<Track> queue;
@@ -1220,6 +1229,7 @@ class PlaybackState {
 
   const PlaybackState({
     this.currentTrack,
+    this.currentAlbumArtUrl,
     this.queue = const [],
     this.queueIndex = -1,
     this.isPlaying = false,
@@ -1287,6 +1297,8 @@ class PlaybackState {
   PlaybackState copyWith({
     Track? currentTrack,
     bool clearCurrentTrack = false,
+    String? currentAlbumArtUrl,
+    bool clearCurrentAlbumArtUrl = false,
     List<Track>? queue,
     int? queueIndex,
     bool? isPlaying,
@@ -1307,6 +1319,9 @@ class PlaybackState {
       PlaybackState(
         currentTrack:
             clearCurrentTrack ? null : (currentTrack ?? this.currentTrack),
+        currentAlbumArtUrl: clearCurrentAlbumArtUrl
+            ? null
+            : (currentAlbumArtUrl ?? this.currentAlbumArtUrl),
         queue: queue ?? this.queue,
         queueIndex: queueIndex ?? this.queueIndex,
         isPlaying: isPlaying ?? this.isPlaying,
@@ -1499,9 +1514,10 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   /// a new track); otherwise the current flag is kept.
   void _reportError(
       String message, Track track, List<Track> queue, int index,
-      {bool? isLive}) {
+      {bool? isLive, String? albumArtUrl}) {
     state = PlaybackState(
       currentTrack: track,
+      currentAlbumArtUrl: albumArtUrl,
       queue: queue,
       queueIndex: index,
       isLive: isLive ?? state.isLive,
@@ -1517,8 +1533,12 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   /// playing track pauses it; tapping the paused track resumes it.
   /// [queue] is the list the track was played from (results,
   /// playlist, album, Discover tab) — it becomes the next/previous
-  /// queue. Without a queue the track plays on its own.
-  Future<void> play(Track track, {List<Track>? queue}) async {
+  /// queue. Without a queue the track plays on its own. [albumArtUrl]
+  /// is the album art the caller knew for this track; it is shown
+  /// only when the track has no cover of its own, and cleared when
+  /// the queue advances without album context.
+  Future<void> play(Track track,
+      {List<Track>? queue, String? albumArtUrl}) async {
     final key = _key(track);
     final current = state;
     if (current.currentKey == key && !current.isResolving) {
@@ -1540,6 +1560,7 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
       track: track,
       queue: newQueue,
       index: index < 0 ? 0 : index,
+      albumArtUrl: albumArtUrl,
       token: token,
     );
     // A newer tap superseded this resolve; its own state update wins.
@@ -1572,6 +1593,7 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
     required List<Track> queue,
     required int index,
     required int token,
+    String? albumArtUrl,
   }) async {
     final result = await _resolver.resolve(track);
     if (token != _playToken) return null;
@@ -1595,6 +1617,7 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
       url: match.streamUrl!,
       queue: queue,
       index: index,
+      albumArtUrl: albumArtUrl,
       token: token,
     );
     return null;
@@ -1680,6 +1703,7 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
     required int index,
     required int token,
     bool isLive = false,
+    String? albumArtUrl,
   }) async {
     // A stop (or a newer tap) that landed after the resolve
     // returned but before this ran must not start audio for a
@@ -1693,7 +1717,8 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
     } on Object catch (e) {
       if (token != _playToken) return;
       _reportError(playbackErrorMessage(e), track, queue, index,
-          isLive: isLive);
+          isLive: isLive,
+          albumArtUrl: _coverFallbackFor(track, albumArtUrl));
       return;
     }
     if (token != _playToken) return;
@@ -1702,8 +1727,11 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
     // track, so the token is checked again after the fetch.
     final fetchedDuration = await _audio.getDuration();
     if (token != _playToken) return;
+    final fallbackArt = _coverFallbackFor(track, albumArtUrl);
     state = state.copyWith(
       currentTrack: track,
+      currentAlbumArtUrl: fallbackArt,
+      clearCurrentAlbumArtUrl: fallbackArt == null,
       queue: queue,
       queueIndex: index,
       isPlaying: true,
@@ -1716,6 +1744,15 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
       shuffledOrder: _orderForQueue(queue, index),
       clearLastError: true,
     );
+  }
+
+  /// Album art for a track that has no cover of its own: the
+  /// caller-supplied album art, or null. A track with its own cover
+  /// never shows the fallback.
+  static String? _coverFallbackFor(Track track, String? albumArtUrl) {
+    if (track.imageUrl != null && track.imageUrl!.isNotEmpty) return null;
+    if (albumArtUrl != null && albumArtUrl.isNotEmpty) return albumArtUrl;
+    return null;
   }
 
   /// Queue containing [track] if the current queue has it, else a
@@ -1825,7 +1862,8 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
       await _audio.resume();
     } on Object catch (e) {
       _reportError(playbackErrorMessage(e), state.currentTrack!,
-          state.queue, state.queueIndex);
+          state.queue, state.queueIndex,
+          albumArtUrl: state.currentAlbumArtUrl);
       return;
     }
     state = state.copyWith(isPlaying: true);

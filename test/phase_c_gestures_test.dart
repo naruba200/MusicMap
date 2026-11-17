@@ -27,6 +27,8 @@ import 'package:music_man/core/theme.dart';
 import 'package:music_man/data/enrichment/enrichment_models.dart';
 import 'package:music_man/data/engine/recommendation_engine.dart';
 import 'package:music_man/data/fallback/fallback_sources.dart';
+import 'package:music_man/data/lastfm/album_tracklist_service.dart';
+import 'package:music_man/data/lastfm/lastfm_client.dart';
 import 'package:music_man/data/models/music_models.dart';
 import 'package:music_man/data/repositories/favorites_repository.dart';
 import 'package:music_man/data/repositories/history_repository.dart';
@@ -39,6 +41,7 @@ import 'package:music_man/presentation/screens/album_detail_screen.dart';
 import 'package:music_man/presentation/screens/favorites_screen.dart';
 import 'package:music_man/presentation/screens/playlist_detail_screen.dart';
 import 'package:music_man/presentation/screens/results_screen.dart';
+import 'package:music_man/presentation/widgets/album_art.dart';
 import 'package:music_man/presentation/widgets/song_actions_sheet.dart';
 import 'package:music_man/presentation/widgets/swipe_action_row.dart';
 
@@ -926,6 +929,15 @@ void main() {
             audioPlayerProvider.overrideWith((ref) => playerFor(backend)),
             favoritesRepositoryProvider.overrideWithValue(favorites),
             playlistRepositoryProvider.overrideWithValue(playlists),
+            // No network in this test: an empty tracklist and a
+            // cached "no art" lookup for the header cover.
+            albumTracklistServiceProvider.overrideWithValue(
+              AlbumTracklistService(
+                fetch: (_, __) async => const AlbumInfo(tracks: []),
+              ),
+            ),
+            albumArtCacheProvider.overrideWith(
+                (ref) => {'singer a|album a': null}),
           ],
           child: _themedApp(const AlbumDetailScreen(album: album)),
         ),
@@ -954,6 +966,15 @@ void main() {
             audioPlayerProvider.overrideWith((ref) => playerFor(backend)),
             favoritesRepositoryProvider.overrideWithValue(favorites),
             playlistRepositoryProvider.overrideWithValue(playlists),
+            // No network in this test: an empty tracklist and a
+            // cached "no art" lookup for the header cover.
+            albumTracklistServiceProvider.overrideWithValue(
+              AlbumTracklistService(
+                fetch: (_, __) async => const AlbumInfo(tracks: []),
+              ),
+            ),
+            albumArtCacheProvider.overrideWith(
+                (ref) => {'singer a|album a': null}),
           ],
           child: _themedApp(const AlbumDetailScreen(album: album)),
         ),

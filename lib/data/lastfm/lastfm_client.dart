@@ -87,6 +87,81 @@ class TagAlbum {
   }
 }
 
+/// One track of an album, from album.getInfo. A name-only entry: no
+/// platform id, no stream URL, no playable Track object. The album
+/// detail screen shows these as names; only tracks that also appear
+/// in the recommendation result play.
+class AlbumTrack {
+  final String name;
+  final String artist;
+  final int? durationMs;
+
+  const AlbumTrack({
+    required this.name,
+    required this.artist,
+    this.durationMs,
+  });
+
+  factory AlbumTrack.fromJson(Map<String, dynamic> json) {
+    final artist = json['artist'];
+    final artistName = artist is Map
+        ? (artist['name'] as String? ?? '')
+        : (artist as String? ?? '');
+    // Two shapes: the Last.fm wire format (duration in seconds)
+    // and the cache format written by toJson (durationMs).
+    final cachedMs = (json['durationMs'] as num?)?.toInt();
+    final seconds = cachedMs == null
+        ? int.tryParse('${json['duration'] ?? ''}')
+        : null;
+    return AlbumTrack(
+      name: json['name'] as String? ?? '',
+      artist: artistName,
+      durationMs: cachedMs ??
+          (seconds != null && seconds > 0 ? seconds * 1000 : null),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'artist': artist,
+        if (durationMs != null) 'durationMs': durationMs,
+      };
+}
+
+/// An album with its full tracklist, from album.getInfo.
+class AlbumInfo {
+  final String? name;
+  final String? artist;
+  final List<AlbumTrack> tracks;
+  final String? imageUrl;
+
+  const AlbumInfo({this.name, this.artist, this.tracks = const [], this.imageUrl});
+
+  factory AlbumInfo.fromJson(Map<String, dynamic> json) {
+    final album =
+        (json['album'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final albumArtist = album['artist'] as String? ?? '';
+    final rawTracks = (album['tracks'] as Map?)?['track'];
+    final tracks = _asList(rawTracks).map((t) {
+      final track = AlbumTrack.fromJson(t);
+      // Last.fm sometimes leaves a track artist blank; the album
+      // artist is the honest fallback, never a guessed name.
+      if (track.artist.trim().isNotEmpty) return track;
+      return AlbumTrack(
+        name: track.name,
+        artist: albumArtist,
+        durationMs: track.durationMs,
+      );
+    }).where((t) => t.name.trim().isNotEmpty).toList();
+    return AlbumInfo(
+      name: album['name'] as String?,
+      artist: albumArtist.isEmpty ? null : albumArtist,
+      tracks: tracks,
+      imageUrl: _largestImage(album['image']),
+    );
+  }
+}
+
 /// Album metadata for a track (track.getInfo) — used for lazy album art (FR-11).
 class TrackAlbumInfo {
   final String? album;
@@ -313,6 +388,20 @@ class LastFmClient {
       'autocorrect': '1',
     });
     return TrackAlbumInfo.fromJson(data);
+  }
+
+  /// An album with its full tracklist (album.getInfo). The tracklist
+  /// is the whole album in Last.fm order, including tracks the
+  /// recommendation run never picked. An empty track list means
+  /// Last.fm has no tracklist for this album; an error envelope
+  /// (unknown album) still throws LastFmException.
+  Future<AlbumInfo> getAlbumInfo(String artist, String album) async {
+    final data = await _get('album.getInfo', {
+      'artist': artist,
+      'album': album,
+      'autocorrect': '1',
+    });
+    return AlbumInfo.fromJson(data);
   }
 }
 

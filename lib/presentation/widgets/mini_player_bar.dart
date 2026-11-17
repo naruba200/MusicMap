@@ -35,6 +35,7 @@ import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
 import '../screens/full_player_screen.dart';
 import 'add_to_playlist_sheet.dart';
+import 'album_art.dart' show coverUrlFor;
 import 'editorial_route.dart';
 import 'favorite_button.dart';
 import 'undo_snackbar.dart';
@@ -155,6 +156,11 @@ class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar>
     final track = ref.watch(
         audioPlayerProvider.select((s) => s.currentTrack));
     if (track == null) return const SizedBox.shrink();
+    // Album art for a track with no cover of its own, when the
+    // caller that started playback knew the album. Null everywhere
+    // else: the placeholder tile stays.
+    final albumArtUrl = ref.watch(
+        audioPlayerProvider.select((s) => s.currentAlbumArtUrl));
     final isPlaying = ref.watch(
         audioPlayerProvider.select((s) => s.isPlaying));
     final hasPrevious = ref.watch(
@@ -219,7 +225,8 @@ class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar>
                       children: [
                         Padding(
                           padding: const EdgeInsets.fromLTRB(12, 8, 4, 0),
-                          child: _cover(track, tokens),
+                          child: _cover(track, tokens,
+                              fallbackImageUrl: albumArtUrl),
                         ),
                         Expanded(
                           child: Padding(
@@ -414,9 +421,16 @@ class _MiniPlayerProgressState
   }
 }
 
-Widget _cover(Track track, MusicManDesignTokens? tokens) {
+Widget _cover(Track track, MusicManDesignTokens? tokens,
+    {String? fallbackImageUrl}) {
   final radius = tokens?.coverRadius ?? 2;
-  if (track.imageUrl != null) {
+  // Chain: the track's own cover, then the album art passed in with
+  // playback, then the plain note tile.
+  final url = coverUrlFor(
+    imageUrl: track.imageUrl,
+    fallbackImageUrl: fallbackImageUrl,
+  );
+  if (url != null) {
     // Disk-cached cover at about 2x the display size, so the strip
     // never re-fetches or re-decodes at full resolution. While
     // loading (or on error) it shows the same note mark as a
@@ -424,7 +438,7 @@ Widget _cover(Track track, MusicManDesignTokens? tokens) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: CachedNetworkImage(
-        imageUrl: track.imageUrl!,
+        imageUrl: url,
         width: 56,
         height: 56,
         fit: BoxFit.cover,

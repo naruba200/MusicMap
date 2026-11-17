@@ -10,6 +10,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'core/appearance.dart';
 import 'core/theme.dart';
+import 'data/lastfm/album_tracklist_cache.dart';
 import 'data/network/retry_interceptor.dart';
 import 'data/news/news_repository.dart';
 import 'data/repositories/favorites_repository.dart';
@@ -56,6 +57,7 @@ Future<void> main() async {
     final playlistRepo = await PlaylistRepository.open();
     final favoritesRepo = await FavoritesRepository.open();
     final historyRepo = await HistoryRepository.open();
+    final albumTracklistCache = await AlbumTracklistCache.open();
     final newsDio = Dio();
     newsDio.interceptors.add(ConnectionRetryInterceptor(newsDio));
     final newsRepo = await NewsRepository.open(newsDio);
@@ -69,6 +71,7 @@ Future<void> main() async {
         playlistRepositoryProvider.overrideWithValue(playlistRepo),
         favoritesRepositoryProvider.overrideWithValue(favoritesRepo),
         historyRepositoryProvider.overrideWithValue(historyRepo),
+        albumTracklistCacheProvider.overrideWithValue(albumTracklistCache),
         newsRepositoryProvider.overrideWithValue(newsRepo),
       ],
     );

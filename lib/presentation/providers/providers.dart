@@ -13,6 +13,9 @@ import '../../data/auth/token_store.dart';
 import '../../data/engine/recommendation_engine.dart';
 import '../../data/fallback/fallback_sources.dart';
 import '../../data/fullsong/resolution_log.dart';
+import '../../data/lastfm/album_tracklist_cache.dart';
+import '../../data/lastfm/album_tracklist_service.dart';
+import '../../data/lastfm/lastfm_client.dart';
 import '../../data/models/music_models.dart';
 import '../../data/network/retry_interceptor.dart';
 import '../../data/platforms/music_platform.dart';
@@ -99,6 +102,27 @@ final favoritesRepositoryProvider =
 /// Overridden in main() after Hive opens.
 final historyRepositoryProvider =
     Provider<HistoryRepository>((ref) => throw UnimplementedError());
+
+/// Hive cache for album tracklists. Null until main() opens the box
+/// and overrides it; the tracklist service treats a null cache as
+/// "fetch every time", so screens still work without it.
+final albumTracklistCacheProvider =
+    Provider<AlbumTracklistCache?>((ref) => null);
+
+/// Fetches an album's full tracklist (Last.fm album.getInfo) with
+/// Hive caching. Overridden in tests with a stub fetcher so widget
+/// tests never touch the network.
+final albumTracklistServiceProvider =
+    Provider<AlbumTracklistService>((ref) {
+  final dio = ref.watch(dioProvider);
+  final cache = ref.watch(albumTracklistCacheProvider);
+  return AlbumTracklistService(
+    fetch: (artist, album) =>
+        LastFmClient(dio: dio, apiKey: lastFmApiKey)
+            .getAlbumInfo(artist, album),
+    cache: cache,
+  );
+});
 
 /// Full-song resolution log (last ~100 attempts, in-memory): the
 /// "Playback log" screen watches this; the player records into it via

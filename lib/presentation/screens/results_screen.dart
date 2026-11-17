@@ -14,19 +14,17 @@
 
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/appearance.dart';
-import '../../core/constants.dart';
 import '../../data/engine/recommendation_engine.dart';
 import '../../data/enrichment/album_enrichment.dart';
 import '../../data/enrichment/enrichment_models.dart';
-import '../../data/lastfm/lastfm_client.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
+import '../widgets/album_art.dart';
 import '../widgets/editorial_route.dart';
 import '../widgets/editorial_widgets.dart';
 import '../widgets/favorite_button.dart';
@@ -38,14 +36,6 @@ import '../widgets/undo_snackbar.dart';
 import '../widgets/youtube_export_sheet.dart';
 import 'album_detail_screen.dart';
 import 'why_this_song_screen.dart';
-
-/// Session cache for lazily fetched album art (FR-11): key → image URL
-/// (null = looked up, none found).
-final _albumArtCacheProvider =
-    StateProvider<Map<String, String?>>((ref) => {});
-
-String _albumCacheKey(String artist, String album) =>
-    '${artist.toLowerCase().trim()}|${album.toLowerCase().trim()}';
 
 /// The reason line shown under a result row, built from the scored
 /// reasons exactly as before: the top two contributing seed titles.
@@ -322,6 +312,23 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       );
     }
     final queue = [for (final s in result.songs) s.track];
+    // Album art per result track (Group 4, part 3): a track with no
+    // cover of its own shows its album's art instead. New runs
+    // already carry it from deriveAlbums; this covers stored runs
+    // whose tracks were saved before the backfill.
+    final albumArtByTrack = <String, String?>{};
+    for (final album in result.albums) {
+      final enrichment = result.albumEnrichments[
+          albumEnrichmentKey(album.artist, album.name)];
+      final art = albumArtFallbackUrl(album, enrichment);
+      for (final s in album.songs) {
+        albumArtByTrack.putIfAbsent(
+          RecommendationEngine.normalizeKey(
+              s.track.artist, s.track.title),
+          () => art,
+        );
+      }
+    }
     // Tapping anywhere in the list closes an open swipe row.
     return GestureDetector(
       onTap: SwipeActionRow.closeAnyOpen,
@@ -364,6 +371,9 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               coverSize: isComplex ? 56 : 48,
               swipeActionsEnabled: true,
               onRemove: () => _removeResult(scored),
+              fallbackImageUrl: albumArtByTrack[
+                  RecommendationEngine.normalizeKey(
+                      scored.track.artist, scored.track.title)],
             ),
           );
         },
@@ -523,7 +533,7 @@ class _AlbumCardState extends ConsumerState<_AlbumCard> {
       }
     }
     // TheAudioDB lines: discography, plus an artwork credit when
-    // the card art itself comes from TheAudioDB (see _AlbumArt).
+    // the card art itself comes from TheAudioDB (see AlbumArtImage).
     String? tadbLine;
     final usesTadbArt = (album.artUrl == null || album.artUrl!.isEmpty) &&
         e != null &&
@@ -558,7 +568,7 @@ class _AlbumCardState extends ConsumerState<_AlbumCard> {
                   Stack(
                     alignment: Alignment.center,
                     children: [
-                      _AlbumArt(
+                      AlbumArtImage.square(
                           album: album,
                           size: 72,
                           enrichment: enrichment),
@@ -667,6 +677,8 @@ class _AlbumCardState extends ConsumerState<_AlbumCard> {
                       .play(
                         scored.track,
                         queue: [for (final s in album.songs) s.track],
+                        albumArtUrl:
+                            albumArtFallbackUrl(album, enrichment),
                       ),
                 ),
               ),
@@ -701,97 +713,3 @@ class _AlbumCardState extends ConsumerState<_AlbumCard> {
       );
 }
 
-/// Album art with lazy Last.fm fill (FR-11): shows cached art, else fetches
-/// track.getInfo for the top recommended song once and caches the result.
-/// TheAudioDB art (Phase 2, step 3) is the last fallback, after Last.fm:
-/// generation-time Last.fm art wins, and when enrichment art exists the
-/// lazy fetch is skipped so the card shows art immediately.
-class _AlbumArt extends ConsumerStatefulWidget {
-  final AlbumRec album;
-  final double size;
-
-  /// TheAudioDB annotation for this album, if enrichment found one.
-  final AlbumEnrichment? enrichment;
-
-  const _AlbumArt(
-      {required this.album, required this.size, this.enrichment});
-
-  @override
-  ConsumerState<_AlbumArt> createState() => _AlbumArtState();
-}
-
-class _AlbumArtState extends ConsumerState<_AlbumArt> {
-  bool _fetching = false;
-
-  @override
-  void initState() {
-    super.initState();
-    final enrichArt = widget.enrichment?.artUrl;
-    final enrichThumb = widget.enrichment?.artistThumbUrl;
-    final hasEnrichArt =
-        (enrichArt != null && enrichArt.isNotEmpty) ||
-            (enrichThumb != null && enrichThumb.isNotEmpty);
-    if ((widget.album.artUrl == null || widget.album.artUrl!.isEmpty) &&
-        !hasEnrichArt) {
-      _fetching = true;
-      Future.microtask(_fetchArt);
-    }
-  }
-
-  Future<void> _fetchArt() async {
-    final key = _albumCacheKey(widget.album.artist, widget.album.name);
-    final cache = ref.read(_albumArtCacheProvider);
-    if (cache.containsKey(key)) {
-      if (mounted) setState(() => _fetching = false);
-      return;
-    }
-    String? url;
-    try {
-      if (widget.album.songs.isNotEmpty) {
-        final top = widget.album.songs.first.track;
-        final client =
-            LastFmClient(dio: ref.read(dioProvider), apiKey: lastFmApiKey);
-        final info = await client.getTrackInfo(top.artist, top.title);
-        url = info.imageUrl;
-      }
-    } catch (_) {
-      url = null; // art stays a placeholder; never breaks the card
-    }
-    ref.read(_albumArtCacheProvider.notifier).state = {...cache, key: url};
-    if (mounted) setState(() => _fetching = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final key = _albumCacheKey(widget.album.artist, widget.album.name);
-    final cached = ref.watch(_albumArtCacheProvider)[key];
-    final url = (widget.album.artUrl?.isNotEmpty ?? false)
-        ? widget.album.artUrl
-        : cached ??
-            widget.enrichment?.artUrl ??
-            widget.enrichment?.artistThumbUrl;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(2),
-      child: SizedBox(
-        width: widget.size,
-        height: widget.size,
-        child: url != null && url.isNotEmpty
-            ? CachedNetworkImage(
-                imageUrl: url,
-                fit: BoxFit.cover,
-                placeholder: (_, __) =>
-                    const Center(child: CircularProgressIndicator()),
-                errorWidget: (_, __, ___) =>
-                    const Icon(Icons.album_outlined, size: 40),
-              )
-            : _fetching
-                ? const Center(
-                    child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2)))
-                : const Icon(Icons.album_outlined, size: 40),
-      ),
-    );
-  }
-}

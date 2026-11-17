@@ -25,6 +25,27 @@ class Track {
     this.streamUrl,
   });
 
+  Track copyWith({
+    String? title,
+    String? artist,
+    String? album,
+    String? imageUrl,
+    int? durationMs,
+    String? platformTrackId,
+    String? previewUrl,
+    String? streamUrl,
+  }) =>
+      Track(
+        title: title ?? this.title,
+        artist: artist ?? this.artist,
+        album: album ?? this.album,
+        imageUrl: imageUrl ?? this.imageUrl,
+        durationMs: durationMs ?? this.durationMs,
+        platformTrackId: platformTrackId ?? this.platformTrackId,
+        previewUrl: previewUrl ?? this.previewUrl,
+        streamUrl: streamUrl ?? this.streamUrl,
+      );
+
   Map<String, dynamic> toJson() => {
         'title': title,
         'artist': artist,

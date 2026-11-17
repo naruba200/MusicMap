@@ -36,6 +36,7 @@ import '../../data/engine/recommendation_engine.dart';
 import '../../data/models/music_models.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
+import 'album_art.dart' show coverUrlFor;
 import 'favorite_button.dart';
 import 'add_to_playlist_sheet.dart';
 import 'song_actions_sheet.dart';
@@ -90,6 +91,12 @@ class EditorialSongRow extends ConsumerStatefulWidget {
   /// the saved playlist.
   final VoidCallback? onRemove;
 
+  /// Cover fallback (Group 4, part 3): album art, or the artist
+  /// thumb when that is all the caller has. The row shows
+  /// track.imageUrl first and this only when the track has no cover
+  /// of its own. Null keeps the plain placeholder tile.
+  final String? fallbackImageUrl;
+
   final double coverSize;
 
   const EditorialSongRow({
@@ -105,6 +112,7 @@ class EditorialSongRow extends ConsumerStatefulWidget {
     this.trailingMark,
     this.swipeActionsEnabled = false,
     this.onRemove,
+    this.fallbackImageUrl,
     this.coverSize = 48,
   });
 
@@ -148,6 +156,9 @@ class _EditorialSongRowState extends ConsumerState<EditorialSongRow> {
     ref.read(audioPlayerProvider.notifier).play(
           widget.track,
           queue: widget.queue,
+          // The player shows the album art only when the track has
+          // no cover of its own (see PlaybackState.currentAlbumArtUrl).
+          albumArtUrl: widget.fallbackImageUrl,
         );
   }
 
@@ -378,7 +389,11 @@ class _EditorialSongRowState extends ConsumerState<EditorialSongRow> {
                           : const SizedBox.shrink(),
             ),
             const SizedBox(width: 8),
-            _CoverThumb(track: track, size: widget.coverSize),
+            _CoverThumb(
+              track: track,
+              size: widget.coverSize,
+              fallbackImageUrl: widget.fallbackImageUrl,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -587,17 +602,27 @@ class _PlaylistDropBar extends ConsumerWidget {
 
 /// Cover art with a geometric fallback (DESIGN.md: cover art is the
 /// only other color on screen; a missing cover is a plain paper-2
-/// tile with a note mark, never a broken image icon).
+/// tile with a note mark, never a broken image icon). The chain is
+/// track.imageUrl, then [fallbackImageUrl] (album art or artist
+/// thumb from the caller), then the placeholder tile.
 class _CoverThumb extends StatelessWidget {
   final Track track;
   final double size;
+  final String? fallbackImageUrl;
 
-  const _CoverThumb({required this.track, required this.size});
+  const _CoverThumb({
+    required this.track,
+    required this.size,
+    this.fallbackImageUrl,
+  });
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final url = track.imageUrl;
+    final url = coverUrlFor(
+      imageUrl: track.imageUrl,
+      fallbackImageUrl: fallbackImageUrl,
+    );
     Widget placeholder = Container(
       width: size,
       height: size,
