@@ -6,6 +6,14 @@
 // loaded. It watches the player itself, so position ticks rebuild only
 // the bar, never the shell or the tab behind it.
 //
+// Dismiss: the X button at the end of the top row, or a downward swipe
+// on the bar, stops playback through the notifier's stop(), which
+// clears the bar and the Android shade notification in one action.
+// The drag follows the finger; releasing past about one third of the
+// bar height, or with a downward fling, completes the dismiss, and
+// below the threshold the bar springs back. A tap never dismisses:
+// the body tap still opens the full player, and a drag never opens it.
+//
 // Editorial restyle (DESIGN.md): paper 2 surface with a hairline top
 // border, no elevation, no old deep-purple seed. Bigger cover thumb.
 // The line below the artist shows the album when present, else the
@@ -14,6 +22,8 @@
 // own actions. Live streams show "Live" instead of a duration, and
 // only for true live streams: a track with no duration that is not
 // live shows no progress rule, just the zero times.
+
+import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -36,7 +46,107 @@ class MiniPlayerBar extends ConsumerStatefulWidget {
   ConsumerState<MiniPlayerBar> createState() => _MiniPlayerBarState();
 }
 
-class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar> {
+class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar>
+    with SingleTickerProviderStateMixin {
+  /// Release at or past this far down (about one third of the bar) to
+  /// dismiss; below it the bar springs back. A tap never moves the
+  /// bar, so it never dismisses.
+  static const _kDismissThreshold = 56.0;
+
+  /// A downward fling faster than this dismisses whatever the offset.
+  static const _kFlingVelocity = 300.0;
+
+  /// How far the bar has been dragged down, in pixels. Zero at rest.
+  double _dragDy = 0;
+
+  /// True while the exit slide is running; drags are ignored then,
+  /// the bar is already on its way out.
+  bool _dismissing = false;
+
+  /// Drives one exit or spring-back slide; recreated per slide.
+  AnimationController? _slideController;
+
+  @override
+  void dispose() {
+    _slideController?.dispose();
+    super.dispose();
+  }
+
+  /// The bar's own height, for the exit slide target; 200 when the
+  /// layout is not available yet (the bar is about 170 tall).
+  double get _barHeight => context.size?.height ?? 200.0;
+
+  /// The motion duration for a dismiss slide: the design's player
+  /// rise (220 ms in Complex, zero in Compact and under reduced
+  /// motion), so the bar leaves with the same motion the player
+  /// rose with, and instantly where the design has no motion.
+  Duration _motionDuration() =>
+      Theme.of(context).extension<MusicManDesignTokens>()?.playerRise ??
+      Duration.zero;
+
+  /// Dismiss through the notifier's stop(): one action clears the bar
+  /// and the Android shade notification together, and bumps the play
+  /// token, so a late resolve cannot resurrect the bar. Instant in
+  /// Compact and under reduced motion; in Complex the bar slides
+  /// down first, then stops.
+  void _dismiss() {
+    if (_dismissing) return;
+    final player = ref.read(audioPlayerProvider.notifier);
+    final duration = _motionDuration();
+    if (duration == Duration.zero) {
+      unawaited(player.stop());
+      return;
+    }
+    _dismissing = true;
+    _animateOffsetTo(
+      _barHeight,
+      duration,
+      () {
+        _dismissing = false;
+        if (!mounted) return;
+        unawaited(player.stop());
+      },
+    );
+  }
+
+  /// Slide back to rest after a short drag. Instant where the design
+  /// has no motion.
+  void _springBack() {
+    if (_dismissing) return;
+    final duration = _motionDuration();
+    if (duration == Duration.zero) {
+      if (_dragDy != 0) setState(() => _dragDy = 0);
+      return;
+    }
+    _animateOffsetTo(0, duration, null);
+  }
+
+  /// Animate the drag offset to [target] over [duration], then run
+  /// [onDone]. A drag starting mid-slide stops the slide and takes
+  /// over from the current offset, so the bar never jumps.
+  void _animateOffsetTo(
+      double target, Duration duration, VoidCallback? onDone) {
+    final start = _dragDy;
+    if ((target - start).abs() < 0.5) {
+      if (start != target) setState(() => _dragDy = target);
+      onDone?.call();
+      return;
+    }
+    _slideController?.dispose();
+    final controller = AnimationController(vsync: this, duration: duration);
+    _slideController = controller;
+    final animation = Tween<double>(begin: start, end: target).animate(
+      CurvedAnimation(parent: controller, curve: Curves.easeOut),
+    );
+    animation.addListener(() {
+      if (mounted) setState(() => _dragDy = animation.value);
+    });
+    controller.addStatusListener((status) {
+      if (status == AnimationStatus.completed) onDone?.call();
+    });
+    controller.forward();
+  }
+
   @override
   Widget build(BuildContext context) {
     // Select only the fields the strip renders. Position ticks
@@ -58,10 +168,38 @@ class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar> {
     // so on) the track was resolved from; nothing when neither exists.
     final metaLine = track.album ?? player.streamSourceFor(track);
 
-    return Material(
-      color: theme.colorScheme.surface,
-      elevation: 0,
-      child: Container(
+    // The swipe surface is the whole bar: a downward drag follows
+    // the finger, and the release either dismisses or springs back.
+    // The vertical drag recognizer only claims on vertical movement,
+    // so taps still reach the body and the buttons, the slider keeps
+    // its horizontal drag, and a drag never opens the full player.
+    return Transform.translate(
+      offset: Offset(0, _dragDy),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onVerticalDragStart: (_) => _slideController?.stop(),
+        onVerticalDragUpdate: (details) {
+          if (_dismissing) return;
+          setState(() {
+            _dragDy = (_dragDy + details.delta.dy)
+                .clamp(0.0, _barHeight);
+          });
+        },
+        onVerticalDragEnd: (details) {
+          if (_dismissing) return;
+          final velocity = details.velocity.pixelsPerSecond.dy;
+          if (_dragDy >= _kDismissThreshold ||
+              velocity > _kFlingVelocity) {
+            _dismiss();
+          } else {
+            _springBack();
+          }
+        },
+        onVerticalDragCancel: _springBack,
+        child: Material(
+          color: theme.colorScheme.surface,
+          elevation: 0,
+          child: Container(
         decoration: BoxDecoration(
           color: theme.colorScheme.surface,
           border: Border(
@@ -120,6 +258,14 @@ class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar> {
                   tooltip: 'Add to playlist',
                   onPressed: () => _addToPlaylist(context, track),
                 ),
+                // Dismiss: same stop() as the swipe, so the bar and
+                // the shade notification clear together. IconButton
+                // is 48x48, the minimum tap target.
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Dismiss player',
+                  onPressed: _dismiss,
+                ),
               ],
             ),
             Row(
@@ -154,6 +300,8 @@ class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar> {
               child: _MiniPlayerProgress(),
             ),
           ],
+        ),
+          ),
         ),
       ),
     );

@@ -40,6 +40,10 @@ Future<void> showYouTubeExportSheet(
           label: 'Retry',
           onPressed: () => showYouTubeExportSheet(context, ref, tracks),
         ),
+        // An action SnackBar persists by framework default; persist
+        // false makes the Retry offer leave on its own after 4 s.
+        duration: const Duration(seconds: 4),
+        persist: false,
       ),
     );
     return;

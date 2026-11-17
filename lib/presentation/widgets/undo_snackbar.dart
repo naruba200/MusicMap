@@ -25,6 +25,12 @@ void showUndoSnackBar(
 /// the time the toast is shown (the drag drop bar is removed when
 /// the drag ends, so its context is gone before the save lands).
 /// The messenger itself outlives the bar.
+///
+/// A SnackBar with an action defaults to persist in the framework
+/// (persist is action != null unless set), so without persist false
+/// here the Undo toast would sit on screen until the user swiped it
+/// away. The Undo window is 4 seconds; after that the toast leaves
+/// on its own.
 void showUndoSnackBarForMessenger(
   ScaffoldMessengerState messenger, {
   required String message,
@@ -36,6 +42,7 @@ void showUndoSnackBarForMessenger(
       content: Text(message),
       action: SnackBarAction(label: 'Undo', onPressed: onUndo),
       duration: const Duration(seconds: 4),
+      persist: false,
     ),
   );
 }

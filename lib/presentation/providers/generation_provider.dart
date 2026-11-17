@@ -1681,6 +1681,11 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
     required int token,
     bool isLive = false,
   }) async {
+    // A stop (or a newer tap) that landed after the resolve
+    // returned but before this ran must not start audio for a
+    // track the user already dismissed: the token is checked
+    // before the backend is touched, not only after playing.
+    if (token != _playToken) return;
     _ensureSubs();
     try {
       await _audio.stop();
