@@ -28,6 +28,19 @@ import '../screens/spotify_login_screen.dart';
 /// Global navigator key so deep links can push routes from providers.
 final navigatorKey = GlobalKey<NavigatorState>();
 
+/// Observes the root Navigator for the full-player route. The shell
+/// sits above the Navigator, so it cannot subscribe to a route
+/// itself (ModalRoute.of finds nothing there); the full player
+/// screen subscribes through this observer and reports its top
+/// state in [fullPlayerOnTop] (see FullPlayerScreen).
+final musicManRouteObserver = RouteObserver<PageRoute<dynamic>>();
+
+/// True while the full-player route is the top route. The app shell
+/// hides its bottom bar (mini-player plus nav) while this is true:
+/// the player itself is on screen, so the strip beneath it would
+/// be a dead duplicate.
+final fullPlayerOnTop = ValueNotifier<bool>(false);
+
 /// Bottom-nav tab index: 0 Home, 1 Discover, 2 News, 3 Favorites,
 /// 4 History, 5 Settings.
 final tabIndexProvider = StateProvider<int>((ref) => 0);
@@ -241,6 +254,31 @@ class SavedPlaylistsNotifier extends StateNotifier<List<SavedPlaylist>> {
       String platformId, String playlistId, DiscoverySettings s) async {
     await _repo.updateSettings(platformId, playlistId, s);
     state = _repo.getAll();
+  }
+
+  /// Removes one track from a saved playlist (Phase C swipe Remove
+  /// + Undo). Returns true when a track was removed.
+  Future<bool> removeTrack(
+      String platformId, String playlistId, Track track) async {
+    final removed = await _repo.removeTrack(platformId, playlistId, track);
+    if (removed) state = _repo.getAll();
+    return removed;
+  }
+
+  /// Inserts one track at [index] in a saved playlist (Undo of a
+  /// swipe Remove, restoring the original position instead of
+  /// appending at the end). Returns true when the track was
+  /// inserted.
+  Future<bool> insertTrackAt(
+    String platformId,
+    String playlistId,
+    Track track,
+    int index,
+  ) async {
+    final inserted =
+        await _repo.insertTrack(platformId, playlistId, track, index);
+    if (inserted) state = _repo.getAll();
+    return inserted;
   }
 
   /// Re-fetches a saved playlist and returns the number of new tracks.

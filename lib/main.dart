@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'core/appearance.dart';
 import 'core/theme.dart';
 import 'data/network/retry_interceptor.dart';
 import 'data/news/news_repository.dart';
@@ -133,9 +134,18 @@ class MusicManApp extends ConsumerWidget {
     });
 
     final appearance = ref.watch(appearanceProvider);
+    // Reduced motion: the system disableAnimations flag zeroes
+    // every token duration (see AppTheme.themeData). Read through
+    // the dispatcher, which is available anywhere; the ambient
+    // MediaQuery agrees with it in the real app and is the path a
+    // widget test can set. Density never changes, only motion.
+    final reduceMotion = WidgetsBinding.instance.platformDispatcher
+            .accessibilityFeatures.disableAnimations ||
+        (MediaQuery.maybeDisableAnimationsOf(context) ?? false);
     final themeData = AppTheme.themeData(
       appearance.effectiveTheme,
       appearance.design,
+      reduceMotion: reduceMotion,
     );
 
     return MaterialApp(
@@ -147,6 +157,10 @@ class MusicManApp extends ConsumerWidget {
       theme: themeData,
       darkTheme: themeData,
       navigatorKey: navigatorKey,
+      // The route observer lets the full-player screen report when
+      // it is the top route, so the shell can hide its bottom bar
+      // under it (see fullPlayerOnTop in providers.dart).
+      navigatorObservers: [musicManRouteObserver],
       home: const _RootScaffold(),
       // The shell wraps the root Navigator (child): the mini-player
       // and the bottom nav sit above it, so pushed routes cover the
@@ -234,34 +248,47 @@ class AppShell extends ConsumerWidget {
     return Overlay(
       initialEntries: [
         OverlayEntry(
-          builder: (context) => Scaffold(
-            body: child,
-            // The mini-player sits above the nav on every tab and every
-            // pushed route. It watches the player itself, so position
-            // ticks rebuild only the bar; this shell stays out of it.
-            bottomNavigationBar: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const MiniPlayerBar(),
-                NavigationBar(
-                  selectedIndex: index,
-                  onDestinationSelected: (i) {
-                    // Visiting News clears the dot and records the visit.
-                    if (i == 2) {
-                      ref.read(newsProvider.notifier).markSeen();
-                    }
-                    ref.read(tabIndexProvider.notifier).state = i;
-                  },
-                  destinations: [
-                    for (var d = 0; d < _destinations.length; d++)
-                      NavigationDestination(
-                        icon: _destinationIcon(d, false, hasNew),
-                        selectedIcon: _destinationIcon(d, true, hasNew),
-                        label: _destinations[d].$3,
-                      ),
-                  ],
-                ),
-              ],
+          builder: (context) => ValueListenableBuilder<bool>(
+            valueListenable: fullPlayerOnTop,
+            builder: (context, playerOnTop, _) => Scaffold(
+              body: child,
+              // The mini-player sits above the nav on every tab and every
+              // pushed route. It watches the player itself, so position
+              // ticks rebuild only the bar; this shell stays out of it.
+              // While the full player is the top route the whole bottom
+              // bar hides: the player itself is on screen, so the strip
+              // beneath it would be a dead duplicate. Dismissing the
+              // player brings it back.
+              bottomNavigationBar: playerOnTop
+                  ? null
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const MiniPlayerBar(),
+                        NavigationBar(
+                          selectedIndex: index,
+                          onDestinationSelected: (i) {
+                            // Visiting News clears the dot and records the visit.
+                            if (i == 2) {
+                              ref.read(newsProvider.notifier).markSeen();
+                            }
+                            ref
+                                .read(tabIndexProvider.notifier)
+                                .state = i;
+                          },
+                          destinations: [
+                            for (var d = 0; d < _destinations.length; d++)
+                              NavigationDestination(
+                                icon:
+                                    _destinationIcon(d, false, hasNew),
+                                selectedIcon:
+                                    _destinationIcon(d, true, hasNew),
+                                label: _destinations[d].$3,
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
             ),
           ),
         ),
@@ -269,6 +296,17 @@ class AppShell extends ConsumerWidget {
     );
   }
 }
+
+/// The PageController driving the tab PageView, shared between the
+/// nav bar (taps drive it through tabIndexProvider) and the tab body
+/// (swipes drive it directly). One controller for the app, created
+/// on first use at the current tab.
+final tabPageControllerProvider = Provider<PageController>((ref) {
+  final controller =
+      PageController(initialPage: ref.read(tabIndexProvider));
+  ref.onDispose(controller.dispose);
+  return controller;
+});
 
 class _RootScaffold extends ConsumerWidget {
   const _RootScaffold();
@@ -284,7 +322,143 @@ class _RootScaffold extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final index = ref.watch(tabIndexProvider);
-    return IndexedStack(index: index, children: _screens);
+    final controller = ref.watch(tabPageControllerProvider);
+    final tokens =
+        Theme.of(context).extension<MusicManDesignTokens>();
+    // Provider changes (nav taps, deep links) drive the controller;
+    // swipes drive the provider through onPageChanged below. The
+    // page check stops the two from ping-ponging: a provider change
+    // that already matches the controller's page does nothing.
+    ref.listen<int>(tabIndexProvider, (previous, next) {
+      if (!controller.hasClients) return;
+      if (controller.page?.round() == next) return;
+      final tabSwitch = tokens?.tabSwitch ?? Duration.zero;
+      if (tabSwitch == Duration.zero) {
+        controller.jumpToPage(next);
+      } else {
+        controller.animateToPage(
+          next,
+          duration: tabSwitch,
+          curve: Curves.easeOut,
+        );
+      }
+    });
+    // Tab swipe (DESIGN.md): the next tab previews as the drag
+    // follows the finger, and the release completes or snaps back.
+    // PageView gives that natively, with its own snap semantics
+    // (nearest page on release, velocity-aware) instead of the
+    // prototype's exact 60 px release threshold; the behavior is
+    // the same. At the first or last tab there is no tab beyond, so
+    // a drag that way moves nothing. Tab swipe lives on the tab
+    // body only, never on pushed screens: this PageView is the tab
+    // body, and pushed routes sit above it. A swipe starting on a
+    // swipeable row acts on the row: the row's inner horizontal
+    // drag recognizer wins the gesture arena over this PageView.
+    return PageView(
+      controller: controller,
+      // pageSnapping is false on purpose: with snapping on, the
+      // PageView inserts its own PageScrollPhysics above the widget
+      // physics, and that copy intercepts the release snap (it
+      // returns its own spring without delegating), so the Compact
+      // instant settle below would never run. With snapping off,
+      // the widget physics owns the snap: _CompactPagePhysics
+      // settles instantly in Compact, plain PageScrollPhysics
+      // springs in Complex. The drag preview and onPageChanged
+      // reporting are unaffected.
+      pageSnapping: false,
+      // Compact is strictly MOTION 0, so the release settles
+      // instantly instead of animating; Complex keeps the native
+      // snap. The drag preview follows the finger in both designs.
+      physics: tokens?.design == AppDesign.complex
+          ? const PageScrollPhysics()
+          : const _CompactPagePhysics(),
+      onPageChanged: (page) {
+        if (ref.read(tabIndexProvider) != page) {
+          ref.read(tabIndexProvider.notifier).state = page;
+        }
+      },
+      children: [
+        for (final screen in _screens) _KeepAliveTab(child: screen),
+      ],
+    );
   }
+}
+
+/// Keeps one tab's state alive across swipes: a PageView only builds
+/// the pages near the current one, so without this a tab would lose
+/// its scroll position and loaded state when swiped away from.
+class _KeepAliveTab extends StatefulWidget {
+  const _KeepAliveTab({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_KeepAliveTab> createState() => _KeepAliveTabState();
+}
+
+class _KeepAliveTabState extends State<_KeepAliveTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
+  }
+}
+
+/// Page snap physics for Compact (MOTION 0): the release settles on
+/// the target page at once instead of animating there. The target is
+/// the same one the native snap would pick (nearest page, or one
+/// page over on a fling), only the travel is instant.
+class _CompactPagePhysics extends PageScrollPhysics {
+  const _CompactPagePhysics({super.parent});
+
+  @override
+  _CompactPagePhysics applyTo(ScrollPhysics? ancestor) =>
+      _CompactPagePhysics(parent: buildParent(ancestor));
+
+  @override
+  Simulation? createBallisticSimulation(
+      ScrollMetrics position, double velocity) {
+    // An overscroll still springs back through the parent: the
+    // instant settle only applies to a page change inside bounds.
+    if (position.outOfRange) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+    final page = position.pixels / position.viewportDimension;
+    double targetPage;
+    if (velocity.abs() > 50) {
+      targetPage = velocity > 0 ? page.ceilToDouble() : page.floorToDouble();
+      // A fling from exactly on a page still moves one page over.
+      if (targetPage == page) {
+        targetPage = velocity > 0 ? page + 1 : page - 1;
+      }
+    } else {
+      targetPage = page.roundToDouble();
+    }
+    final maxPage =
+        position.maxScrollExtent / position.viewportDimension;
+    targetPage = targetPage.clamp(0.0, maxPage);
+    final target = targetPage * position.viewportDimension;
+    if ((target - position.pixels).abs() < 0.5) return null;
+    return _InstantSimulation(target);
+  }
+}
+
+/// A simulation that is already at its target: one step lands there.
+class _InstantSimulation extends Simulation {
+  _InstantSimulation(this._x);
+
+  final double _x;
+
+  @override
+  double x(double time) => _x;
+
+  @override
+  double dx(double time) => 0;
+
+  @override
+  bool isDone(double time) => true;
 }

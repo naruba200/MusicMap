@@ -22,9 +22,11 @@ import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
 import '../widgets/editorial_route.dart';
 import '../widgets/editorial_widgets.dart';
-import '../widgets/outbound_sheet.dart';
+import '../widgets/song_actions_sheet.dart';
 import '../widgets/song_row.dart';
 import '../widgets/spotify_youtube_review.dart';
+import '../widgets/swipe_action_row.dart';
+import '../widgets/undo_snackbar.dart';
 import '../widgets/youtube_export_sheet.dart';
 import 'generating_screen.dart';
 
@@ -65,6 +67,64 @@ class _PlaylistDetailScreenState
   /// reuses the same resolution.
   ExportResolution? _youTubeResolution;
   Set<String> _youTubeMatchedKeys = const {};
+
+  /// Rows the user removed with the swipe Remove action, by
+  /// normalized artist+title. The track list here is the live
+  /// platform fetch, so hiding the row is local; the removal
+  /// itself lands in the saved playlist (see [_removeTrack]).
+  final _dismissedKeys = <String>{};
+
+  /// Swipe Remove on a playlist row: take the track out of the
+  /// saved playlist and hide the row, with an Undo toast that
+  /// puts it back where it was (its original position in the
+  /// saved list, not appended at the end).
+  Future<void> _removeTrack(
+      PlaylistDetailData data, Track track) async {
+    final key =
+        RecommendationEngine.normalizeKey(track.artist, track.title);
+    // The original position in the SAVED list, captured before the
+    // removal: the displayed list is the live platform fetch, so
+    // its index is not necessarily the saved one.
+    final savedIndex = ref
+            .read(playlistRepositoryProvider)
+            .get(widget.platformId, widget.playlistId)
+            ?.tracks
+            .indexWhere((t) =>
+                RecommendationEngine.normalizeKey(t.artist, t.title) ==
+                key) ??
+        -1;
+    final removed = await ref
+        .read(savedPlaylistsProvider.notifier)
+        .removeTrack(widget.platformId, widget.playlistId, track);
+    if (!mounted) return;
+    setState(() => _dismissedKeys.add(key));
+    showUndoSnackBar(
+      context,
+      message: removed
+          ? 'Removed ${track.title} from ${data.info.name}'
+          : 'Removed ${track.title} from this view',
+      onUndo: () async {
+        if (removed) {
+          // Back where it was; a track the saved list never held
+          // (live-only) falls back to appending at the end.
+          if (savedIndex >= 0) {
+            await ref
+                .read(savedPlaylistsProvider.notifier)
+                .insertTrackAt(
+                    widget.platformId, widget.playlistId, track, savedIndex);
+          } else {
+            await ref
+                .read(playlistRepositoryProvider)
+                .addTrack(widget.platformId, widget.playlistId, track);
+            // The direct repo write bypasses the notifier, so
+            // re-read the saved lists.
+            ref.invalidate(savedPlaylistsProvider);
+          }
+        }
+        if (mounted) setState(() => _dismissedKeys.remove(key));
+      },
+    );
+  }
 
   String get _detailKey => '${widget.platformId}::${widget.playlistId}';
 
@@ -205,26 +265,35 @@ class _PlaylistDetailScreenState
   }
 
   Widget _buildContent(BuildContext context, PlaylistDetailData data) {
-    final tracks = data.tracks;
+    final tracks = data.tracks
+        .where((t) => !_dismissedKeys.contains(
+            RecommendationEngine.normalizeKey(t.artist, t.title)))
+        .toList();
     final isComplex = _isComplex(context);
     // Index 0 = header; the rest virtualize the track list.
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      itemCount: tracks.length + 1,
-      itemBuilder: (context, i) {
-        if (i == 0) return _buildHeader(context, data, isComplex);
-        final t = tracks[i - 1];
-        return EditorialSongRow(
-          key: ValueKey('playlist-track-${i - 1}'),
-          track: t,
-          queue: tracks,
-          rank: i,
-          doubleTapToLike: false,
-          meta: _rowMeta(t, isComplex),
-          trailingMark: _youTubeMark(t),
-          onOverflow: () => showOutboundSheet(context, t),
-        );
-      },
+    // Tapping anywhere in the list closes an open swipe row.
+    return GestureDetector(
+      onTap: SwipeActionRow.closeAnyOpen,
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        itemCount: tracks.length + 1,
+        itemBuilder: (context, i) {
+          if (i == 0) return _buildHeader(context, data, isComplex);
+          final t = tracks[i - 1];
+          return EditorialSongRow(
+            key: ValueKey('playlist-track-${i - 1}'),
+            track: t,
+            queue: tracks,
+            rank: i,
+            doubleTapToLike: false,
+            meta: _rowMeta(t, isComplex),
+            trailingMark: _youTubeMark(t),
+            onOverflow: () => showSongActionsSheet(context, t),
+            swipeActionsEnabled: true,
+            onRemove: () => _removeTrack(data, t),
+          );
+        },
+      ),
     );
   }
 
@@ -482,8 +551,20 @@ class _PlaylistDetailScreenState
           ],
           Row(
             children: [
-              Text('Tracks (${data.tracks.length})',
-                  style: theme.textTheme.titleSmall),
+              // The count ticks to its new value in Complex (a short
+              // fade over tokens.micro) and changes instantly in
+              // Compact (micro is zero): a number that jumps feels
+              // like a glitch, so it animates instead (DESIGN.md).
+              AnimatedSwitcher(
+                duration: tokens?.micro ?? Duration.zero,
+                transitionBuilder: (child, animation) =>
+                    FadeTransition(opacity: animation, child: child),
+                child: Text(
+                  'Tracks (${data.tracks.length})',
+                  key: ValueKey(data.tracks.length),
+                  style: theme.textTheme.titleSmall,
+                ),
+              ),
               if (isComplex && totalRuntime != null) ...[
                 const Spacer(),
                 Text(totalRuntime,

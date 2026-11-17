@@ -36,11 +36,7 @@ class NewsScreen extends ConsumerWidget {
             tabs: [Tab(text: 'Latest'), Tab(text: 'For you')],
           ),
         ),
-        body: RefreshIndicator(
-          onRefresh: () =>
-              ref.read(newsProvider.notifier).refresh(force: true),
-          child: _body(context, ref, news, hasEnabled),
-        ),
+        body: _body(context, ref, news, hasEnabled),
       ),
     );
   }
@@ -168,11 +164,20 @@ class NewsScreen extends ConsumerWidget {
         message: 'No stories right now. Pull down to refresh.',
       );
     }
-    return _ArticleListView(
-      articles: articles,
-      storageKey: storageKey,
-      headerTitle: headerTitle,
-      headerKanji: headerKanji,
+    // The indicator wraps the list itself, not the whole tab body:
+    // the list sits inside a TabBarView, and a RefreshIndicator
+    // above that TabBarView never sees the list's overscroll (the
+    // notification arrives at depth 1 and the indicator's default
+    // predicate only accepts depth 0), so pull-to-refresh silently
+    // did nothing. Discover wraps each tab's list the same way.
+    return RefreshIndicator(
+      onRefresh: () => ref.read(newsProvider.notifier).refresh(force: true),
+      child: _ArticleListView(
+        articles: articles,
+        storageKey: storageKey,
+        headerTitle: headerTitle,
+        headerKanji: headerKanji,
+      ),
     );
   }
 }
@@ -202,6 +207,11 @@ class _ArticleListView extends StatelessWidget {
     return ListView.builder(
       // Keep scroll position when returning from an article.
       key: PageStorageKey<String>(storageKey),
+      // Always scrollable, so pull-to-refresh works even when the
+      // feed is short: with the default physics a list shorter
+      // than the viewport refuses the drag entirely and the
+      // RefreshIndicator above never fires.
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(top: 4, bottom: 16),
       itemCount: articles.length + (complex ? 1 : 0),
       itemBuilder: (context, i) {

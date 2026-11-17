@@ -29,29 +29,101 @@ import '../../data/models/music_models.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
 import '../widgets/add_to_playlist_sheet.dart';
+import '../widgets/swipe_action_row.dart';
+import '../widgets/undo_snackbar.dart';
 
-/// Toggle the favorite state of [track] with a haptic tick and a toast.
-/// Shared by the heart button and the double-tap-cover gesture.
+/// Toggle the favorite state of [track] with a haptic tick and an
+/// Undo toast. Shared by the heart button and the double-tap-cover
+/// gesture. Undo toggles it straight back.
 void _toggleFavorite(BuildContext context, WidgetRef ref, Track track) {
   final repo = ref.read(favoritesRepositoryProvider);
   final nowFav = repo.toggle(track);
   ref.read(favoritesVersionProvider.notifier).state++;
   HapticFeedback.lightImpact();
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-    content:
-        Text(nowFav ? 'Added to favorites' : 'Removed from favorites'),
-    duration: const Duration(seconds: 1),
-  ));
+  showUndoSnackBar(
+    context,
+    message: nowFav ? 'Added to favorites' : 'Removed from favorites',
+    onUndo: () {
+      repo.toggle(track);
+      ref.read(favoritesVersionProvider.notifier).state++;
+    },
+  );
 }
 
 String _formatDuration(Duration d) =>
     '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
 
-class FullPlayerScreen extends ConsumerWidget {
+class FullPlayerScreen extends ConsumerStatefulWidget {
   const FullPlayerScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<FullPlayerScreen> createState() =>
+      _FullPlayerScreenState();
+}
+
+/// Reports through the shared route observer whether this route is
+/// the top route, so the app shell can hide its bottom bar under
+/// the open player (see fullPlayerOnTop in providers.dart). The
+/// player is the one widget that can subscribe: the shell sits
+/// above the Navigator, so ModalRoute.of finds nothing there.
+class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
+    with RouteAware {
+  /// The last on-top value this screen reported. A route torn down
+  /// without a pop never calls didPop, so dispose resets the shell
+  /// signal from this flag instead of trusting didPop alone.
+  bool _isTop = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      musicManRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void dispose() {
+    musicManRouteObserver.unsubscribe(this);
+    if (_isTop) {
+      fullPlayerOnTop.value = false;
+    }
+    super.dispose();
+  }
+
+  @override
+  void didPush() => _reportTop(true);
+
+  @override
+  void didPop() => _reportTop(false);
+
+  @override
+  void didPushNext() => _reportTop(false);
+
+  @override
+  void didPopNext() => _reportTop(true);
+
+  /// Flips the shell signal after the current frame: the observer
+  /// calls didPush synchronously from subscribe during the first
+  /// build, and flipping the notifier there would mark the shell
+  /// dirty mid-build. Callbacks run in order, so a fast push-then-
+  /// pop still lands on the last value.
+  void _reportTop(bool onTop) {
+    _isTop = onTop;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // A stale true must not land after dispose (the dispose
+      // reset already cleared the signal); a false is always safe
+      // to apply, including after dispose, because the player is
+      // gone by then. Callbacks run in order, so a fast
+      // push-then-pop still lands on the last value.
+      if (mounted || !onTop) {
+        fullPlayerOnTop.value = onTop;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(audioPlayerProvider);
     final track = state.currentTrack;
     final theme = Theme.of(context);
@@ -229,14 +301,21 @@ class _PlayerBody extends ConsumerWidget {
             itemBuilder: (context, index) {
               final item = state.queue[index];
               final isCurrent = index == state.queueIndex;
-              return Dismissible(
-                key: ValueKey('queue-dismiss:${item.artist}::${item.title}'),
-                direction: DismissDirection.horizontal,
-                background: _dismissBackground(context, Alignment.centerLeft),
-                secondaryBackground:
-                    _dismissBackground(context, Alignment.centerRight),
-                onDismissed: (_) =>
-                    _removeFromQueue(context, ref, index, item),
+              // Swipe to remove through the shared swipe row, not a
+              // Dismissible: Dismissible asserts on zero durations,
+              // so it can never be MOTION 0 in Compact. The swipe
+              // row slides the reveal in Complex and applies it
+              // instantly in Compact, with the same Undo toast.
+              return SwipeActionRow(
+                key: ValueKey('queue-row:${item.artist}::${item.title}'),
+                actions: [
+                  SwipeAction(
+                    label: 'Remove',
+                    icon: Icons.delete_outline,
+                    onTap: () =>
+                        _removeFromQueue(context, ref, index, item),
+                  ),
+                ],
                 child: _QueueRow(
                   track: item,
                   index: index,
@@ -256,20 +335,6 @@ class _PlayerBody extends ConsumerWidget {
     );
   }
 
-  Widget _dismissBackground(BuildContext context, Alignment alignment) {
-    final theme = Theme.of(context);
-    return Container(
-      color: theme.colorScheme.inverseSurface,
-      alignment: alignment,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Text(
-        'Remove',
-        style: theme.textTheme.bodyMedium
-            ?.copyWith(color: theme.colorScheme.onInverseSurface),
-      ),
-    );
-  }
-
   Duration? _rowDuration(Track item, bool isCurrent, PlaybackState state) {
     if (item.durationMs != null) {
       return Duration(milliseconds: item.durationMs!);
@@ -282,10 +347,24 @@ class _PlayerBody extends ConsumerWidget {
     WidgetRef ref,
     Track track,
   ) async {
-    final message = await showAddToPlaylistSheet(context, track);
-    if (message == null || !context.mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    final result = await showAddToPlaylistSheet(context, track);
+    if (result == null || !context.mounted) return;
+    if (!result.added) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(result.message)));
+      return;
+    }
+    showUndoSnackBar(
+      context,
+      message: result.message,
+      onUndo: () {
+        ref.read(playlistRepositoryProvider).removeTrack(
+              result.platformId!,
+              result.playlistId!,
+              track,
+            );
+      },
+    );
   }
 
   /// Remove the row, with an Undo toast that puts the track back where
@@ -300,17 +379,15 @@ class _PlayerBody extends ConsumerWidget {
     final player = ref.read(audioPlayerProvider.notifier);
     await player.removeFromQueue(index);
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('Removed ${track.title}'),
-      action: SnackBarAction(
-        label: 'Undo',
-        onPressed: () {
-          player.addToQueue(track);
-          final last = ref.read(audioPlayerProvider).queue.length - 1;
-          if (last > index) player.moveInQueue(last, index);
-        },
-      ),
-    ));
+    showUndoSnackBar(
+      context,
+      message: 'Removed ${track.title}',
+      onUndo: () {
+        player.addToQueue(track);
+        final last = ref.read(audioPlayerProvider).queue.length - 1;
+        if (last > index) player.moveInQueue(last, index);
+      },
+    );
   }
 }
 

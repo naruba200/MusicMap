@@ -26,6 +26,7 @@ import '../screens/full_player_screen.dart';
 import 'add_to_playlist_sheet.dart';
 import 'editorial_route.dart';
 import 'favorite_button.dart';
+import 'undo_snackbar.dart';
 
 class MiniPlayerBar extends ConsumerStatefulWidget {
   const MiniPlayerBar({super.key});
@@ -211,10 +212,24 @@ class _MiniPlayerBarState extends ConsumerState<MiniPlayerBar> {
   }
 
   Future<void> _addToPlaylist(BuildContext context, Track track) async {
-    final message = await showAddToPlaylistSheet(context, track);
-    if (message == null || !context.mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    final result = await showAddToPlaylistSheet(context, track);
+    if (result == null || !context.mounted) return;
+    if (!result.added) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(result.message)));
+      return;
+    }
+    showUndoSnackBar(
+      context,
+      message: result.message,
+      onUndo: () async {
+        await ref.read(playlistRepositoryProvider).removeTrack(
+              result.platformId!,
+              result.playlistId!,
+              track,
+            );
+      },
+    );
   }
 }
 

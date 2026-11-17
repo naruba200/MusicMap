@@ -4,21 +4,32 @@
 // EditorialSongRow with doubleTapToLike false, so a tap plays
 // immediately, like a playlist row.
 //
+// The art header follows the album-cover gesture map: a single tap
+// expands or collapses the tracklist inline (after the 250 ms
+// double-tap window, so a double-tap never toggles it first), a
+// double-tap likes the album (heart pop plus a haptic tick).
+//
 // Complex adds a notes line (the Discogs annotation, only when
 // enrichment actually found one) and larger art.
 
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/appearance.dart';
 import '../../data/engine/recommendation_engine.dart';
 import '../../data/enrichment/album_enrichment.dart';
+import '../providers/providers.dart';
 import '../widgets/editorial_widgets.dart';
 import '../widgets/outbound_sheet.dart';
+import '../widgets/song_actions_sheet.dart';
 import '../widgets/song_row.dart';
+import '../widgets/undo_snackbar.dart';
 
-class AlbumDetailScreen extends ConsumerWidget {
+class AlbumDetailScreen extends ConsumerStatefulWidget {
   final AlbumRec album;
 
   /// Discogs / TheAudioDB annotation for this album, when the
@@ -29,7 +40,73 @@ class AlbumDetailScreen extends ConsumerWidget {
   const AlbumDetailScreen({super.key, required this.album, this.enrichment});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AlbumDetailScreen> createState() => _AlbumDetailScreenState();
+}
+
+class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
+  bool _tracklistExpanded = true;
+  bool _popping = false;
+  Timer? _tapTimer;
+  Timer? _popTimer;
+  DateTime? _lastTap;
+
+  @override
+  void dispose() {
+    _tapTimer?.cancel();
+    _popTimer?.cancel();
+    super.dispose();
+  }
+
+  void _handleArtTap() {
+    final now = DateTime.now();
+    if (_lastTap != null &&
+        now.difference(_lastTap!).inMilliseconds <=
+            kDoubleTapLikeWindow.inMilliseconds) {
+      _tapTimer?.cancel();
+      _tapTimer = null;
+      _lastTap = null;
+      _likeAlbum();
+      return;
+    }
+    _lastTap = now;
+    _tapTimer?.cancel();
+    _tapTimer = Timer(kDoubleTapLikeWindow, () {
+      _tapTimer = null;
+      _lastTap = null;
+      if (mounted) setState(() => _tracklistExpanded = !_tracklistExpanded);
+    });
+  }
+
+  void _likeAlbum() {
+    final repo = ref.read(favoritesRepositoryProvider);
+    final nowFav = repo.toggleAlbum(widget.album);
+    ref.read(favoritesVersionProvider.notifier).state++;
+    HapticFeedback.lightImpact();
+    final micro = Theme.of(context)
+            .extension<MusicManDesignTokens>()
+            ?.micro ??
+        Duration.zero;
+    setState(() => _popping = true);
+    _popTimer?.cancel();
+    _popTimer = Timer(
+      micro + const Duration(milliseconds: 600),
+      () {
+        if (mounted) setState(() => _popping = false);
+      },
+    );
+    showUndoSnackBar(
+      context,
+      message: nowFav ? 'Added to favorites' : 'Removed from favorites',
+      onUndo: () {
+        repo.toggleAlbum(widget.album);
+        ref.read(favoritesVersionProvider.notifier).state++;
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final album = widget.album;
     final theme = Theme.of(context);
     final tokens = theme.extension<MusicManDesignTokens>();
     final isComplex = tokens?.design == AppDesign.complex;
@@ -38,6 +115,7 @@ class AlbumDetailScreen extends ConsumerWidget {
         RecommendationEngine.normalizeKey(s.track.artist, s.track.title)
     };
     final notesLine = _notesLine();
+    final micro = tokens?.micro ?? Duration.zero;
     return Scaffold(
       body: CustomScrollView(
         slivers: [
@@ -47,14 +125,35 @@ class AlbumDetailScreen extends ConsumerWidget {
             flexibleSpace: FlexibleSpaceBar(
               title: Text(album.name,
                   maxLines: 1, overflow: TextOverflow.ellipsis),
-              background: album.artUrl != null && album.artUrl!.isNotEmpty
-                  ? CachedNetworkImage(
-                      imageUrl: album.artUrl!,
-                      fit: BoxFit.cover,
-                      errorWidget: (_, __, ___) =>
-                          const Icon(Icons.album_outlined, size: 96),
-                    )
-                  : const Icon(Icons.album_outlined, size: 96),
+              background: GestureDetector(
+                onTap: _handleArtTap,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    album.artUrl != null && album.artUrl!.isNotEmpty
+                        ? CachedNetworkImage(
+                            imageUrl: album.artUrl!,
+                            fit: BoxFit.cover,
+                            errorWidget: (_, __, ___) =>
+                                const Icon(Icons.album_outlined, size: 96),
+                          )
+                        : const Icon(Icons.album_outlined, size: 96),
+                    if (_popping)
+                      Center(
+                        child: AnimatedScale(
+                          scale: 1,
+                          duration: micro,
+                          curve: Curves.easeOut,
+                          child: Icon(
+                            Icons.favorite,
+                            size: 72,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
           SliverToBoxAdapter(
@@ -98,6 +197,17 @@ class AlbumDetailScreen extends ConsumerWidget {
                     'Open it in Spotify or Deezer to explore.',
               ),
             )
+          else if (!_tracklistExpanded)
+            SliverToBoxAdapter(
+              child: Center(
+                child: TextButton(
+                  onPressed: () =>
+                      setState(() => _tracklistExpanded = true),
+                  child:
+                      Text('Show tracks (${album.songs.length})'),
+                ),
+              ),
+            )
           else
             SliverList(
               delegate: SliverChildBuilderDelegate(
@@ -111,7 +221,7 @@ class AlbumDetailScreen extends ConsumerWidget {
                     track: track,
                     queue: [for (final s in album.songs) s.track],
                     reason: isRec ? 'Recommended' : null,
-                    onOverflow: () => showOutboundSheet(context, track),
+                    onOverflow: () => showSongActionsSheet(context, track),
                     doubleTapToLike: false,
                     meta: isComplex && track.durationMs != null
                         ? _formatDuration(track.durationMs!)
@@ -130,7 +240,7 @@ class AlbumDetailScreen extends ConsumerWidget {
   /// styles, community rating), never presented as Last.fm data.
   /// Null when there is no enrichment to draw on.
   String? _notesLine() {
-    final e = enrichment;
+    final e = widget.enrichment;
     if (e == null || e.isEmpty || !e.sources.contains('Discogs')) {
       return null;
     }

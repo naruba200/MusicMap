@@ -238,7 +238,18 @@ class MusicManDesignTokens extends ThemeExtension<MusicManDesignTokens> {
   factory MusicManDesignTokens.forDesign(
     AppDesign design, {
     required bool isDark,
+    bool reduceMotion = false,
   }) {
+    // Reduced motion (system prefers-reduced-motion): every duration
+    // is zero in both designs, so nothing animates. Density,
+    // elevation, and radii are untouched: only the motion changes,
+    // never the layout.
+    final Duration screenTransition =
+        reduceMotion ? Duration.zero : const Duration(milliseconds: 200);
+    const Duration playerRiseBase = Duration(milliseconds: 220);
+    const Duration tabSwitchBase = Duration(milliseconds: 220);
+    const Duration microBase = Duration(milliseconds: 150);
+    const Duration progressTickBase = Duration(milliseconds: 250);
     switch (design) {
       case AppDesign.compact:
         return MusicManDesignTokens(
@@ -267,11 +278,14 @@ class MusicManDesignTokens extends ThemeExtension<MusicManDesignTokens> {
       case AppDesign.complex:
         return MusicManDesignTokens(
           design: design,
-          screenTransition: const Duration(milliseconds: 200),
-          playerRise: const Duration(milliseconds: 220),
-          tabSwitch: const Duration(milliseconds: 220),
-          micro: const Duration(milliseconds: 150),
-          progressTick: const Duration(milliseconds: 250),
+          screenTransition: screenTransition,
+          playerRise:
+              reduceMotion ? Duration.zero : playerRiseBase,
+          tabSwitch:
+              reduceMotion ? Duration.zero : tabSwitchBase,
+          micro: reduceMotion ? Duration.zero : microBase,
+          progressTick:
+              reduceMotion ? Duration.zero : progressTickBase,
           cardRadius: 4,
           coverRadius: 2,
           chipRadius: 2,

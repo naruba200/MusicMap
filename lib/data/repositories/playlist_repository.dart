@@ -73,6 +73,62 @@ class PlaylistRepository {
     return true;
   }
 
+  /// Inserts [track] at [index] in the saved playlist (Undo of a
+  /// swipe Remove, restoring the original position instead of
+  /// appending at the end). The index is clamped to the list. A
+  /// track with the same normalized artist+title is never added
+  /// twice. Returns true when the track was inserted, false when
+  /// it was already there or the playlist does not exist.
+  Future<bool> insertTrack(
+    String platformId,
+    String playlistId,
+    Track track,
+    int index,
+  ) async {
+    final existing = get(platformId, playlistId);
+    if (existing == null) return false;
+    final key =
+        RecommendationEngine.normalizeKey(track.artist, track.title);
+    final alreadyThere = existing.tracks.any((t) =>
+        RecommendationEngine.normalizeKey(t.artist, t.title) == key);
+    if (alreadyThere) return false;
+    final tracks = [...existing.tracks];
+    tracks.insert(index.clamp(0, tracks.length), track);
+    await save(SavedPlaylist(
+      info: existing.info,
+      tracks: tracks,
+      settings: existing.settings,
+      importedAt: existing.importedAt,
+      lastScannedAt: existing.lastScannedAt,
+    ));
+    return true;
+  }
+
+  /// Removes the track with the same normalized artist+title from
+  /// the saved playlist (the Phase C swipe Remove + Undo). Returns
+  /// true when a track was removed, false when the playlist does
+  /// not exist or the track was not in it.
+  Future<bool> removeTrack(
+      String platformId, String playlistId, Track track) async {
+    final existing = get(platformId, playlistId);
+    if (existing == null) return false;
+    final key =
+        RecommendationEngine.normalizeKey(track.artist, track.title);
+    final tracks = existing.tracks
+        .where((t) =>
+            RecommendationEngine.normalizeKey(t.artist, t.title) != key)
+        .toList();
+    if (tracks.length == existing.tracks.length) return false;
+    await save(SavedPlaylist(
+      info: existing.info,
+      tracks: tracks,
+      settings: existing.settings,
+      importedAt: existing.importedAt,
+      lastScannedAt: existing.lastScannedAt,
+    ));
+    return true;
+  }
+
   Future<void> updateSettings(
       String platformId, String playlistId, DiscoverySettings settings) async {
     final existing = get(platformId, playlistId);

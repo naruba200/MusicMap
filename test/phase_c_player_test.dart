@@ -367,9 +367,9 @@ void main() {
       final player = await loadedPlayer();
       await pumpPlayer(tester, player);
       final rowA =
-          find.byKey(const ValueKey('queue-dismiss:Singer A::Song A'));
+          find.byKey(const ValueKey('queue-row:Singer A::Song A'));
       final rowB =
-          find.byKey(const ValueKey('queue-dismiss:Singer B::Song B'));
+          find.byKey(const ValueKey('queue-row:Singer B::Song B'));
       expect(
         tester.getTopLeft(rowA).dy,
         lessThan(tester.getTopLeft(rowB).dy),
@@ -399,14 +399,19 @@ void main() {
       final player = await loadedPlayer();
       await pumpPlayer(tester, player);
       expect(find.text('Song B'), findsOneWidget);
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('queue-dismiss:Singer B::Song B')),
-      );
+      const rowKey = ValueKey('queue-row:Singer B::Song B');
+      await tester.ensureVisible(find.byKey(rowKey));
       await tester.pump();
-      await tester.drag(
-        find.byKey(const ValueKey('queue-dismiss:Singer B::Song B')),
-        const Offset(-500, 0),
-      );
+      // Swipe the row left to reveal Remove (a swipe alone only
+      // reveals the action; it never removes by itself), then tap
+      // the revealed Remove button at the row's right edge.
+      await tester.drag(find.byKey(rowKey), const Offset(-100, 0));
+      await tester.pump();
+      expect(find.text('Song B'), findsOneWidget);
+      expect(player.state.queue, [_trackA, _trackB, _trackC]);
+      final rowRight = tester.getBottomRight(find.byKey(rowKey)).dx;
+      final rowCenter = tester.getCenter(find.text('Song B'));
+      await tester.tapAt(Offset(rowRight - 36, rowCenter.dy));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump(const Duration(milliseconds: 500));

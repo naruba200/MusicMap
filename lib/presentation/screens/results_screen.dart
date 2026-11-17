@@ -12,7 +12,10 @@
 // Hearts persist to the favorites repo (FR-12); album art fills in
 // lazily via track.getInfo (FR-11); outbound links need no OAuth (v1).
 
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -28,10 +31,12 @@ import '../widgets/editorial_route.dart';
 import '../widgets/editorial_widgets.dart';
 import '../widgets/favorite_button.dart';
 import '../widgets/outbound_sheet.dart';
+import '../widgets/song_actions_sheet.dart';
 import '../widgets/song_row.dart';
+import '../widgets/swipe_action_row.dart';
+import '../widgets/undo_snackbar.dart';
 import '../widgets/youtube_export_sheet.dart';
 import 'album_detail_screen.dart';
-import 'lyrics_screen.dart';
 import 'why_this_song_screen.dart';
 
 /// Session cache for lazily fetched album art (FR-11): key → image URL
@@ -91,6 +96,26 @@ class ResultsScreen extends ConsumerStatefulWidget {
 class _ResultsScreenState extends ConsumerState<ResultsScreen> {
   /// Active Complex filter chip. Null means all songs.
   ReasonBucket? _filter;
+
+  /// Rows the user removed with the swipe Remove action, by
+  /// normalized artist+title. Hidden for this results view only;
+  /// the underlying generation result is untouched.
+  final _dismissedKeys = <String>{};
+
+  /// Swipe Remove on a result row: hide the row for this view,
+  /// with an Undo toast that restores it.
+  void _removeResult(ScoredTrack scored) {
+    final key = RecommendationEngine.normalizeKey(
+        scored.track.artist, scored.track.title);
+    setState(() => _dismissedKeys.add(key));
+    showUndoSnackBar(
+      context,
+      message: 'Removed ${scored.track.title} from results',
+      onUndo: () {
+        if (mounted) setState(() => _dismissedKeys.remove(key));
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -279,7 +304,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
   Widget _songsTab(GenerationResult result, bool isComplex) {
     final entries = <(int, ScoredTrack)>[
       for (var i = 0; i < result.songs.length; i++)
-        if (_filter == null || bucketFor(result.songs[i]) == _filter)
+        if ((_filter == null || bucketFor(result.songs[i]) == _filter) &&
+            !_dismissedKeys.contains(RecommendationEngine.normalizeKey(
+                result.songs[i].track.artist,
+                result.songs[i].track.title)))
           (i, result.songs[i]),
     ];
     if (result.songs.isEmpty) {
@@ -294,32 +322,44 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       );
     }
     final queue = [for (final s in result.songs) s.track];
-    return ListView.builder(
-      itemCount: entries.length,
-      itemBuilder: (ctx, i) {
-        final (rank, scored) = entries[i];
-        final enrichment = result.enrichments[
-            RecommendationEngine.normalizeKey(
-                scored.track.artist, scored.track.title)];
-        return EditorialSongRow(
-          rank: rank + 1,
-          track: scored.track,
-          queue: queue,
-          reason: reasonLineFor(scored).isEmpty
-              ? null
-              : reasonLineFor(scored),
-          onReasonTap: () => Navigator.of(context).push(
-            editorialRoute(
+    // Tapping anywhere in the list closes an open swipe row.
+    return GestureDetector(
+      onTap: SwipeActionRow.closeAnyOpen,
+      child: ListView.builder(
+        itemCount: entries.length,
+        itemBuilder: (ctx, i) {
+          final (rank, scored) = entries[i];
+          final enrichment = result.enrichments[
+              RecommendationEngine.normalizeKey(
+                  scored.track.artist, scored.track.title)];
+          final reason = reasonLineFor(scored);
+          void onWhy() => Navigator.of(context).push(
+                editorialRoute(
+                  context,
+                  (_) => WhyThisSongScreen(scored: scored),
+                ),
+              );
+          return EditorialSongRow(
+            key: ValueKey('result-track-${RecommendationEngine.normalizeKey(scored.track.artist, scored.track.title)}'),
+            rank: rank + 1,
+            track: scored.track,
+            queue: queue,
+            reason: reason.isEmpty ? null : reason,
+            onReasonTap: onWhy,
+            onOverflow: () => showSongActionsSheet(
               context,
-              (_) => WhyThisSongScreen(scored: scored),
+              scored.track,
+              reason: reason.isEmpty ? null : reason,
+              onShowWhy: onWhy,
             ),
-          ),
-          onOverflow: () => _showSongActions(context, scored),
-          doubleTapToLike: true,
-          meta: isComplex ? _trackMeta(scored, enrichment) : null,
-          coverSize: isComplex ? 56 : 48,
-        );
-      },
+            doubleTapToLike: true,
+            meta: isComplex ? _trackMeta(scored, enrichment) : null,
+            coverSize: isComplex ? 56 : 48,
+            swipeActionsEnabled: true,
+            onRemove: () => _removeResult(scored),
+          );
+        },
+      ),
     );
   }
 
@@ -341,57 +381,6 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     return parts.join(' • ');
   }
 
-  /// Overflow sheet: the row actions that used to sit on the row
-  /// itself (Lyrics, Open in), plus Why this song, the same sheet
-  /// the long-press opens (DESIGN.md).
-  void _showSongActions(BuildContext context, ScoredTrack scored) {
-    final track = scored.track;
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.lyrics_outlined),
-              title: const Text('Lyrics'),
-              onTap: () {
-                Navigator.pop(ctx);
-                Navigator.of(context).push(
-                  editorialRoute(
-                    context,
-                    (_) => LyricsScreen(track: track),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.open_in_new),
-              title: const Text('Open in…'),
-              onTap: () {
-                Navigator.pop(ctx);
-                showOutboundSheet(context, track);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.info_outlined),
-              title: const Text('Why this song'),
-              onTap: () {
-                Navigator.pop(ctx);
-                Navigator.of(context).push(
-                  editorialRoute(
-                    context,
-                    (_) => WhyThisSongScreen(scored: scored),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _albumsTab(GenerationResult result) {
     if (result.albums.isEmpty) {
       return const EditorialEmptyState(
@@ -410,10 +399,15 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
   }
 }
 
-/// Cover-led album card (DESIGN.md: Results Albums tab). Tap opens
-/// the album detail; the heart likes the album, the open button
-/// reaches the platforms.
-class _AlbumCard extends ConsumerWidget {
+/// Cover-led album card (DESIGN.md: Results Albums tab). The cover
+/// follows the album-cover gesture map: a single tap expands the
+/// tracklist inline (after the 250 ms double-tap window, so a
+/// double-tap never expands first), a double-tap likes the album
+/// (heart pop plus a haptic tick). The heart likes the album too,
+/// and "View album" still opens the album detail screen: the card
+/// used to navigate on tap, and that path now lives behind the
+/// expand instead.
+class _AlbumCard extends ConsumerStatefulWidget {
   final AlbumRec album;
 
   /// Discogs annotation for this album, if enrichment found one.
@@ -422,7 +416,78 @@ class _AlbumCard extends ConsumerWidget {
   const _AlbumCard({required this.album, this.enrichment});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_AlbumCard> createState() => _AlbumCardState();
+}
+
+class _AlbumCardState extends ConsumerState<_AlbumCard> {
+  bool _expanded = false;
+  bool _popping = false;
+  Timer? _tapTimer;
+  Timer? _popTimer;
+  DateTime? _lastTap;
+
+  @override
+  void dispose() {
+    _tapTimer?.cancel();
+    _popTimer?.cancel();
+    super.dispose();
+  }
+
+  void _cancelPendingTap() {
+    _tapTimer?.cancel();
+    _tapTimer = null;
+    _lastTap = null;
+  }
+
+  void _handleCoverTap() {
+    final now = DateTime.now();
+    if (_lastTap != null &&
+        now.difference(_lastTap!).inMilliseconds <=
+            kDoubleTapLikeWindow.inMilliseconds) {
+      _cancelPendingTap();
+      _likeAlbum();
+      return;
+    }
+    _lastTap = now;
+    _tapTimer?.cancel();
+    _tapTimer = Timer(kDoubleTapLikeWindow, () {
+      _tapTimer = null;
+      _lastTap = null;
+      setState(() => _expanded = !_expanded);
+    });
+  }
+
+  void _likeAlbum() {
+    final repo = ref.read(favoritesRepositoryProvider);
+    final nowFav = repo.toggleAlbum(widget.album);
+    ref.read(favoritesVersionProvider.notifier).state++;
+    HapticFeedback.lightImpact();
+    final micro = Theme.of(context)
+            .extension<MusicManDesignTokens>()
+            ?.micro ??
+        Duration.zero;
+    setState(() => _popping = true);
+    _popTimer?.cancel();
+    _popTimer = Timer(
+      micro + const Duration(milliseconds: 600),
+      () {
+        if (mounted) setState(() => _popping = false);
+      },
+    );
+    showUndoSnackBar(
+      context,
+      message: nowFav ? 'Added to favorites' : 'Removed from favorites',
+      onUndo: () {
+        repo.toggleAlbum(widget.album);
+        ref.read(favoritesVersionProvider.notifier).state++;
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final album = widget.album;
+    final enrichment = widget.enrichment;
     final theme = Theme.of(context);
     final tokens = theme.extension<MusicManDesignTokens>();
     final isComplex = tokens?.design == AppDesign.complex;
@@ -457,6 +522,7 @@ class _AlbumCard extends ConsumerWidget {
       tadbLine = 'More from ${album.artist} (TheAudioDB): '
           '${e.discography.take(3).join(', ')}';
     }
+    final micro = tokens?.micro ?? Duration.zero;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: BoxDecoration(
@@ -465,84 +531,147 @@ class _AlbumCard extends ConsumerWidget {
         borderRadius: BorderRadius.circular(tokens?.cardRadius ?? 4),
         boxShadow: isComplex ? (tokens?.raisedShadow ?? const []) : const [],
       ),
-      child: InkWell(
-        borderRadius:
-            BorderRadius.circular(tokens?.cardRadius ?? 4),
-        onTap: () => Navigator.of(context).push(
-          editorialRoute(
-            context,
-            (_) =>
-                AlbumDetailScreen(album: album, enrichment: enrichment),
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              _AlbumArt(
-                  album: album, size: 72, enrichment: enrichment),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(album.name,
-                        style: theme.textTheme.titleSmall,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis),
-                    Text(album.artist,
-                        style: theme.textTheme.bodyMedium,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis),
-                    const SizedBox(height: 4),
-                    if (album.songCount > 0)
-                      _badge(theme,
-                          '${album.songCount} songs recommended from this album')
-                    else
-                      _badge(theme, 'Surprise pick'),
-                    if (enrichmentLine != null) ...[
-                      const SizedBox(height: 4),
-                      Text(enrichmentLine,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant)),
-                    ],
-                    if (tadbLine != null) ...[
-                      const SizedBox(height: 4),
-                      Text(tadbLine,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant)),
-                    ],
-                    if (usesTadbArt) ...[
-                      const SizedBox(height: 4),
-                      Text('Artwork: TheAudioDB',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant)),
-                    ],
-                  ],
-                ),
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            borderRadius:
+                BorderRadius.circular(tokens?.cardRadius ?? 4),
+            onTap: _handleCoverTap,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
                 children: [
-                  FavoriteAlbumButton(album: album),
-                  IconButton(
-                    icon: const Icon(Icons.open_in_new),
-                    tooltip: 'Open album in…',
-                    onPressed: () => showAlbumOutboundSheet(
-                        context, album.artist, album.name),
+                  Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      _AlbumArt(
+                          album: album,
+                          size: 72,
+                          enrichment: enrichment),
+                      if (_popping)
+                        AnimatedScale(
+                          scale: 1,
+                          duration: micro,
+                          curve: Curves.easeOut,
+                          child: Icon(
+                            Icons.favorite,
+                            size: 36,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                    ],
                   ),
-                  const Icon(Icons.chevron_right),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(album.name,
+                            style: theme.textTheme.titleSmall,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                        Text(album.artist,
+                            style: theme.textTheme.bodyMedium,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                        const SizedBox(height: 4),
+                        if (album.songCount > 0)
+                          _badge(theme,
+                              '${album.songCount} songs recommended from this album')
+                        else
+                          _badge(theme, 'Surprise pick'),
+                        if (enrichmentLine != null) ...[
+                          const SizedBox(height: 4),
+                          Text(enrichmentLine,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant)),
+                        ],
+                        if (tadbLine != null) ...[
+                          const SizedBox(height: 4),
+                          Text(tadbLine,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant)),
+                        ],
+                        if (usesTadbArt) ...[
+                          const SizedBox(height: 4),
+                          Text('Artwork: TheAudioDB',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant)),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      GestureDetector(
+                        onTapDown: (_) => _cancelPendingTap(),
+                        child: FavoriteAlbumButton(album: album),
+                      ),
+                      GestureDetector(
+                        onTapDown: (_) => _cancelPendingTap(),
+                        child: IconButton(
+                          icon: const Icon(Icons.open_in_new),
+                          tooltip: 'Open album in…',
+                          onPressed: () => showAlbumOutboundSheet(
+                              context, album.artist, album.name),
+                        ),
+                      ),
+                      Icon(_expanded
+                          ? Icons.expand_less
+                          : Icons.expand_more),
+                    ],
+                  ),
                 ],
               ),
-            ],
+            ),
           ),
-        ),
+          if (_expanded) ...[
+            const Divider(height: 1),
+            for (final scored in album.songs)
+              // A ListTile paints its ink on the nearest Material
+              // ancestor, and the card's decorated Container would
+              // hide it: give each row its own Material in the
+              // card's surface color so the tap ripple shows.
+              Material(
+                color: theme.colorScheme.surface,
+                child: ListTile(
+                  dense: true,
+                  title: Text(scored.track.title,
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(scored.track.artist,
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  trailing: const Icon(Icons.play_arrow, size: 20),
+                  onTap: () => ref
+                      .read(audioPlayerProvider.notifier)
+                      .play(
+                        scored.track,
+                        queue: [for (final s in album.songs) s.track],
+                      ),
+                ),
+              ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  editorialRoute(
+                    context,
+                    (_) => AlbumDetailScreen(
+                        album: album, enrichment: enrichment),
+                  ),
+                ),
+                child: const Text('View album'),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

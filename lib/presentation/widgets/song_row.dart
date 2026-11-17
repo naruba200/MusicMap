@@ -14,6 +14,14 @@
 // - Playlist rows (doubleTapToLike: false): a tap plays immediately.
 // - A tap on the heart, overflow, or reason line cancels a pending
 //   play, so liking or opening actions never starts playback.
+//
+// Gestures (DESIGN.md, Phase C group 3):
+// - Swipe left (swipeActionsEnabled) reveals Like, Add, Remove
+//   behind the row; the caller owns what Remove means.
+// - Long-press (about 500 ms) then release without moving opens
+//   the context sheet; hold then move drags the song onto a
+//   playlist via the drop bar. A quick swipe never waits the hold
+//   out, so the two gestures do not fight.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -28,6 +36,10 @@ import '../../data/models/music_models.dart';
 import '../providers/generation_provider.dart';
 import '../providers/providers.dart';
 import 'favorite_button.dart';
+import 'add_to_playlist_sheet.dart';
+import 'song_actions_sheet.dart';
+import 'swipe_action_row.dart';
+import 'undo_snackbar.dart';
 
 /// The double-tap window (DESIGN.md): short enough that a single-tap
 /// play still feels instant, long enough to catch a fast second tap.
@@ -65,6 +77,18 @@ class EditorialSongRow extends ConsumerStatefulWidget {
   /// playlist row after the Spotify review). Null hides it.
   final Widget? trailingMark;
 
+  /// When true, a left swipe reveals the quick actions (Like, Add
+  /// to playlist, Remove). Results and Playlist detail opt in;
+  /// Favorites keeps its own Dismissible swipe-to-remove and
+  /// Discover opts out, so both leave this false.
+  final bool swipeActionsEnabled;
+
+  /// The Remove quick action. Null hides Remove from the swipe
+  /// actions. The meaning is the caller's: Results hides the row
+  /// for the current view, Playlist detail removes the track from
+  /// the saved playlist.
+  final VoidCallback? onRemove;
+
   final double coverSize;
 
   const EditorialSongRow({
@@ -78,6 +102,8 @@ class EditorialSongRow extends ConsumerStatefulWidget {
     this.doubleTapToLike = true,
     this.meta,
     this.trailingMark,
+    this.swipeActionsEnabled = false,
+    this.onRemove,
     this.coverSize = 48,
   });
 
@@ -89,9 +115,25 @@ class _EditorialSongRowState extends ConsumerState<EditorialSongRow> {
   Timer? _playTimer;
   DateTime? _lastTap;
 
+  /// The playlist drop bar overlay, shown while a drag is in
+  /// flight. Null when no drag is running.
+  OverlayEntry? _dropBarEntry;
+
+  /// True once a long-press drag has moved. A hold released
+  /// without moving opens the context sheet instead of dragging.
+  bool _dragMoved = false;
+
+  /// While a drag ran, the row's tap is suppressed: the pointer-up
+  /// that ends the drag must not also count as a tap to play.
+  /// Cleared a moment after the drag ends.
+  bool _suppressTap = false;
+  Timer? _suppressTimer;
+
   @override
   void dispose() {
     _playTimer?.cancel();
+    _suppressTimer?.cancel();
+    _hideDropBar();
     super.dispose();
   }
 
@@ -113,17 +155,18 @@ class _EditorialSongRowState extends ConsumerState<EditorialSongRow> {
     final nowFav = repo.toggle(widget.track);
     ref.read(favoritesVersionProvider.notifier).state++;
     HapticFeedback.lightImpact();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          nowFav ? 'Added to favorites' : 'Removed from favorites',
-        ),
-        duration: const Duration(seconds: 1),
-      ),
+    showUndoSnackBar(
+      context,
+      message: nowFav ? 'Added to favorites' : 'Removed from favorites',
+      onUndo: () {
+        repo.toggle(widget.track);
+        ref.read(favoritesVersionProvider.notifier).state++;
+      },
     );
   }
 
   void _handleTap() {
+    if (_suppressTap) return;
     if (!widget.doubleTapToLike) {
       _play();
       return;
@@ -145,12 +188,149 @@ class _EditorialSongRowState extends ConsumerState<EditorialSongRow> {
     });
   }
 
+  // -- Long-press drag to a playlist (DESIGN.md) --------------------
+  //
+  // One LongPressDraggable per row disambiguates the hold from the
+  // drag: the drag starts after about 500 ms held still
+  // (LongPressDraggable's default delay). A hold released without
+  // moving opens the context sheet; a hold followed by movement is
+  // the drag, and the drop bar appears. A quick swipe never waits
+  // the 500 ms out, so the swipe quick actions win that arena
+  // instead. The pick-up tick comes from LongPressDraggable itself
+  // (hapticFeedbackOnStart); the drop tick is in the drop bar.
+
+  void _onDragStarted() {
+    _cancelPendingPlay();
+    _dragMoved = false;
+    _suppressTap = true;
+    _showDropBar();
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    _dragMoved = true;
+  }
+
+  void _onDragEnd(DraggableDetails details) {
+    _hideDropBar();
+    _suppressTimer?.cancel();
+    _suppressTimer = Timer(const Duration(milliseconds: 300), () {
+      _suppressTap = false;
+    });
+    if (!_dragMoved && !details.wasAccepted && mounted) {
+      showSongActionsSheet(
+        context,
+        widget.track,
+        reason: widget.reason,
+        onShowWhy: widget.onReasonTap,
+      );
+    }
+  }
+
+  void _onDragCanceled(Velocity velocity, Offset offset) {
+    _hideDropBar();
+    _suppressTimer?.cancel();
+    _suppressTimer = Timer(const Duration(milliseconds: 300), () {
+      _suppressTap = false;
+    });
+  }
+
+  void _showDropBar() {
+    if (_dropBarEntry != null) return;
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    _dropBarEntry = OverlayEntry(
+      builder: (overlayContext) =>
+          _PlaylistDropBar(track: widget.track),
+    );
+    overlay.insert(_dropBarEntry!);
+  }
+
+  void _hideDropBar() {
+    _dropBarEntry?.remove();
+    _dropBarEntry = null;
+  }
+
+  /// The swipe quick actions for this row: Like toggles the
+  /// favorite, Add opens the shared add-to-playlist sheet, Remove
+  /// is the caller's removal (hidden when the caller passes none).
+  List<SwipeAction> _swipeActions() {
+    final repo = ref.read(favoritesRepositoryProvider);
+    final isFav = repo.isFavorite(widget.track.artist, widget.track.title);
+    final onRemove = widget.onRemove;
+    return [
+      SwipeAction(
+        label: 'Like',
+        icon: isFav ? Icons.favorite : Icons.favorite_outline,
+        onTap: _like,
+      ),
+      SwipeAction(
+        label: 'Add',
+        icon: Icons.playlist_add,
+        onTap: () async {
+          final result =
+              await showAddToPlaylistSheet(context, widget.track);
+          if (result == null || !mounted) return;
+          if (!result.added) {
+            showToast(context, result.message);
+            return;
+          }
+          showUndoSnackBar(
+            context,
+            message: result.message,
+            onUndo: () {
+              unawaited(
+                ref.read(playlistRepositoryProvider).removeTrack(
+                      result.platformId!,
+                      result.playlistId!,
+                      widget.track,
+                    ),
+              );
+            },
+          );
+        },
+      ),
+      if (onRemove != null)
+        SwipeAction(
+          label: 'Remove',
+          icon: Icons.delete_outline,
+          onTap: onRemove,
+        ),
+    ];
+  }
+
+  /// The small card that follows the finger during a drag.
+  Widget _dragFeedback() {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          border: Border.all(color: scheme.outline),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.music_note, size: 20),
+            const SizedBox(width: 8),
+            Text('${widget.track.artist} - ${widget.track.title}'),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final track = widget.track;
     final playback = ref.watch(audioPlayerProvider);
+    // Rebuild when a favorite toggles so the swipe Like icon stays
+    // honest (the heart button itself rebuilds via setState).
+    ref.watch(favoritesVersionProvider);
     final key =
         RecommendationEngine.normalizeKey(track.artist, track.title);
     final isCurrent = playback.currentKey == key;
@@ -160,7 +340,7 @@ class _EditorialSongRowState extends ConsumerState<EditorialSongRow> {
     final animatePlaying =
         tokens?.design == AppDesign.complex && isCurrent;
 
-    return InkWell(
+    final row = InkWell(
       onTap: _handleTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -255,6 +435,143 @@ class _EditorialSongRowState extends ConsumerState<EditorialSongRow> {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+
+    final withSwipe = widget.swipeActionsEnabled
+        ? SwipeActionRow(actions: _swipeActions(), child: row)
+        : row;
+    return LongPressDraggable<Track>(
+      data: track,
+      feedback: _dragFeedback(),
+      childWhenDragging: Opacity(opacity: 0.4, child: withSwipe),
+      onDragStarted: _onDragStarted,
+      onDragUpdate: _onDragUpdate,
+      onDragEnd: _onDragEnd,
+      onDraggableCanceled: _onDragCanceled,
+      child: withSwipe,
+    );
+  }
+}
+
+/// The playlist drop bar (DESIGN.md: "Drag a song onto a
+/// playlist"). A bottom overlay listing the user's saved playlists
+/// as DragTargets, shown while a row drag is in flight. It is
+/// inserted into the root overlay, so it sits above the
+/// mini-player strip and the bottom navigation. Dropping a track
+/// adds it (never twice) with an Undo toast that removes it again;
+/// the drop gives a light haptic tick.
+class _PlaylistDropBar extends ConsumerWidget {
+  final Track track;
+
+  const _PlaylistDropBar({required this.track});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final playlists = ref.watch(playlistRepositoryProvider).getAll();
+    // The bar sits just above the bottom strip: the navigation bar
+    // (80) plus the mini-player when a track is loaded (about 168).
+    final playing =
+        ref.watch(audioPlayerProvider.select((s) => s.currentTrack != null));
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: playing ? 256 : 88,
+      child: Material(
+        color: scheme.surface,
+        child: Container(
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            border: Border(top: BorderSide(color: scheme.outline)),
+          ),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Drop on a playlist',
+                  style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              if (playlists.isEmpty)
+                Text(
+                  'No saved playlists yet. Import one from Home first.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant),
+                )
+              else
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final playlist in playlists)
+                      DragTarget<Track>(
+                        builder: (context, candidate, rejected) {
+                          final hovered = candidate.isNotEmpty;
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: hovered
+                                  ? scheme.primaryContainer
+                                  : scheme.surface,
+                              border: Border.all(
+                                  color: hovered
+                                      ? scheme.primary
+                                      : scheme.outline),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                            child: Text(
+                              '${playlist.info.name} '
+                              '(${playlist.tracks.length})',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: hovered
+                                      ? scheme.onPrimaryContainer
+                                      : null),
+                            ),
+                          );
+                        },
+                        onAcceptWithDetails: (details) async {
+                          // Resolve the messenger before the await:
+                          // the drop bar is removed when the drag
+                          // ends, so its context is unmounted by
+                          // the time the save lands. The messenger
+                          // outlives the bar.
+                          final messenger =
+                              ScaffoldMessenger.of(context);
+                          final repo =
+                              ref.read(playlistRepositoryProvider);
+                          final added = await repo.addTrack(
+                            playlist.info.platformId,
+                            playlist.info.id,
+                            details.data,
+                          );
+                          HapticFeedback.lightImpact();
+                          if (added) {
+                            showUndoSnackBarForMessenger(
+                              messenger,
+                              message:
+                                  'Added to ${playlist.info.name}',
+                              onUndo: () {
+                                repo.removeTrack(
+                                  playlist.info.platformId,
+                                  playlist.info.id,
+                                  details.data,
+                                );
+                              },
+                            );
+                          } else {
+                            showToastForMessenger(messenger,
+                                'Already in ${playlist.info.name}');
+                          }
+                        },
+                      ),
+                  ],
+                ),
+            ],
+          ),
         ),
       ),
     );

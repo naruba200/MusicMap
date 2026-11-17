@@ -27,7 +27,11 @@ abstract final class AppTheme {
   static const String displayFontFamily = 'Archivo';
   static const String japaneseFontFamily = 'Noto Sans JP';
 
-  static ThemeData themeData(AppThemeName name, AppDesign design) {
+  static ThemeData themeData(
+    AppThemeName name,
+    AppDesign design, {
+    bool reduceMotion = false,
+  }) {
     final p = name.palette;
     final brightness =
         name.isDark ? Brightness.dark : Brightness.light;
@@ -63,11 +67,19 @@ abstract final class AppTheme {
       focusColor: p.accent.withValues(alpha: 0.12),
       hoverColor: p.accent.withValues(alpha: 0.08),
       splashColor: p.accent.withValues(alpha: 0.12),
-      highlightColor: p.accent.withValues(alpha: 0.08),
+      // Rows flash paper 2 on tap (DESIGN.md: Press states): the
+      // highlight is the raised surface color, not an accent tint,
+      // so a pressed row reads as the paper lifting, not as a
+      // colored stain. The splash ripple above keeps the accent.
+      highlightColor: p.paper2,
       textTheme: textTheme,
       primaryTextTheme: textTheme,
       extensions: [
-        MusicManDesignTokens.forDesign(design, isDark: name.isDark),
+        MusicManDesignTokens.forDesign(
+          design,
+          isDark: name.isDark,
+          reduceMotion: reduceMotion,
+        ),
       ],
       appBarTheme: AppBarTheme(
         backgroundColor: p.paper,

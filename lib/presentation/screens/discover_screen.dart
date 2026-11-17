@@ -18,6 +18,7 @@ import '../providers/discover_provider.dart';
 import '../providers/generation_provider.dart';
 import '../widgets/editorial_route.dart';
 import '../widgets/editorial_widgets.dart';
+import '../widgets/song_actions_sheet.dart';
 import '../widgets/song_row.dart';
 import 'generating_screen.dart';
 
@@ -145,10 +146,33 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
     );
   }
 
+  /// Re-runs the current tab's fetches: trending for the selected
+  /// genre, plus the search and the imported playlist when one is
+  /// showing. The indicator waits for the trending reload; a failed
+  /// source still surfaces as its own error load.
+  Future<void> _refresh() async {
+    ref.invalidate(audiusTrendingProvider(_genre));
+    if (_search.isNotEmpty) {
+      ref.invalidate(audiusSearchProvider(_search));
+    }
+    final playlistId = _playlistId == null
+        ? null
+        : AudiusClient.parsePlaylistLink(_playlistId!);
+    if (playlistId != null) {
+      ref.invalidate(audiusPlaylistProvider(playlistId));
+    }
+    try {
+      await ref.read(audiusTrendingProvider(_genre).future);
+    } catch (_) {
+      // The provider already turns the failure into an error load.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final trending = ref.watch(audiusTrendingProvider(_genre));
-    return ListView(
+    final list = ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(16),
       children: [
         Text(
@@ -266,6 +290,7 @@ class _AudiusTabState extends ConsumerState<_AudiusTab> {
         ],
       ],
     );
+    return RefreshIndicator(onRefresh: _refresh, child: list);
   }
 
   void _importPlaylist() {
@@ -471,6 +496,7 @@ class _TrackList extends StatelessWidget {
               meta: complex
                   ? (_durationLabel(track.durationMs) ?? sourceLabel)
                   : null,
+              onOverflow: () => showSongActionsSheet(context, track),
             ),
           ),
       ],
@@ -536,12 +562,34 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
     );
   }
 
+  /// Re-runs the current tab's fetches: the radios list, plus the
+  /// search and the imported playlist when one is showing. The
+  /// indicator waits for the radios reload.
+  Future<void> _refresh() async {
+    ref.invalidate(jamendoRadiosProvider);
+    if (_search.isNotEmpty) {
+      ref.invalidate(jamendoSearchProvider(_search));
+    }
+    final playlistId = _playlistId == null
+        ? null
+        : JamendoClient.parsePlaylistLink(_playlistId!);
+    if (playlistId != null) {
+      ref.invalidate(jamendoPlaylistProvider(playlistId));
+    }
+    try {
+      await ref.read(jamendoRadiosProvider.future);
+    } catch (_) {
+      // The provider already turns the failure into an error load.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final clientId = ref.watch(jamendoClientIdProvider);
     final configured =
         clientId.isNotEmpty && !clientId.startsWith('YOUR_');
-    return ListView(
+    final list = ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(16),
       children: [
         if (!configured)
@@ -653,6 +701,7 @@ class _JamendoTabState extends ConsumerState<_JamendoTab> {
         const _JamendoRadiosView(),
       ],
     );
+    return RefreshIndicator(onRefresh: _refresh, child: list);
   }
 }
 
@@ -827,9 +876,24 @@ class _OpenwhydTabState extends ConsumerState<_OpenwhydTab> {
     );
   }
 
+  /// Re-runs the imported playlist fetch when one is showing. This
+  /// tab has no feed of its own, so with nothing imported there is
+  /// nothing to refresh.
+  Future<void> _refresh() async {
+    final key = _playlistKey;
+    if (key == null) return;
+    ref.invalidate(openwhydPlaylistProvider(key));
+    try {
+      await ref.read(openwhydPlaylistProvider(key).future);
+    } catch (_) {
+      // The provider already turns the failure into an error load.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return ListView(
+    final list = ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(16),
       children: [
         Text(
@@ -871,6 +935,7 @@ class _OpenwhydTabState extends ConsumerState<_OpenwhydTab> {
         ],
       ],
     );
+    return RefreshIndicator(onRefresh: _refresh, child: list);
   }
 
   void _import() {
@@ -1034,9 +1099,39 @@ class _MixcloudTabState extends ConsumerState<_MixcloudTab> {
     super.dispose();
   }
 
+  /// Re-runs the current show list (tag shows, show search, or the
+  /// selected feed), plus the tag search when one is showing. The
+  /// indicator waits for the show list reload.
+  Future<void> _refresh() async {
+    final tagKey = _tagKey;
+    final showQuery = _showQuery;
+    if (tagKey != null) {
+      ref.invalidate(mixcloudTagShowsProvider(tagKey));
+    } else if (showQuery.isNotEmpty) {
+      ref.invalidate(mixcloudSearchProvider(showQuery));
+    } else {
+      ref.invalidate(mixcloudFeedProvider(_feed));
+    }
+    if (_tagQuery.isNotEmpty) {
+      ref.invalidate(mixcloudTagSearchProvider(_tagQuery));
+    }
+    try {
+      if (tagKey != null) {
+        await ref.read(mixcloudTagShowsProvider(tagKey).future);
+      } else if (showQuery.isNotEmpty) {
+        await ref.read(mixcloudSearchProvider(showQuery).future);
+      } else {
+        await ref.read(mixcloudFeedProvider(_feed).future);
+      }
+    } catch (_) {
+      // The provider already turns the failure into an error load.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return ListView(
+    final list = ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(16),
       children: [
         Text(
@@ -1167,6 +1262,7 @@ class _MixcloudTabState extends ConsumerState<_MixcloudTab> {
         ),
       ],
     );
+    return RefreshIndicator(onRefresh: _refresh, child: list);
   }
 }
 

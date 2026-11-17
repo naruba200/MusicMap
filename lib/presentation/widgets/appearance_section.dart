@@ -6,6 +6,7 @@
 // restored on launch. Tap a swatch to apply it; press and hold to
 // preview the whole app in that theme, releasing reverts.
 
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -52,7 +53,11 @@ class AppearanceSection extends ConsumerWidget {
                 _themeSwatch(
                   theme: themeName,
                   selected: themeName == active,
-                  onTap: () => notifier.setTheme(themeName),
+                  onTap: () {
+                    // A light tick confirms the apply without looking.
+                    HapticFeedback.lightImpact();
+                    notifier.setTheme(themeName);
+                  },
                   onPreviewStart: () => notifier.previewTheme(themeName),
                   onPreviewEnd: () => notifier.clearPreview(),
                 ),
@@ -159,8 +164,11 @@ class AppearanceSection extends ConsumerWidget {
               ),
             ],
             selected: {appearance.design},
-            onSelectionChanged: (selected) =>
-                notifier.setDesign(selected.single),
+            onSelectionChanged: (selected) {
+              // A light tick confirms the switch without looking.
+              HapticFeedback.lightImpact();
+              notifier.setDesign(selected.single);
+            },
           ),
         ],
       ),

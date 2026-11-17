@@ -1,6 +1,7 @@
 // Shared add-to-playlist sheet (mini-player and full player): the
 // user's saved playlists, newest first. Tapping one appends the track
-// (never twice) and pops with the message the caller shows.
+// (never twice) and pops with the pick result: the message the caller
+// shows plus the playlist identity, so the caller can offer Undo.
 //
 // The sheet is opened from the mini-player, which lives above the
 // Navigator in the app shell, so its own context cannot reach a
@@ -14,16 +15,34 @@ import 'package:material_ui/material_ui.dart';
 import '../../data/models/music_models.dart';
 import '../providers/providers.dart';
 
-/// Opens the sheet for [track] and returns the result message, or null
+/// What picking a playlist returns: the message the caller shows,
+/// plus the target playlist identity, so the caller can offer Undo
+/// that removes the track again. [added] is false when the track
+/// was already in the playlist: there is nothing to undo then.
+class AddToPlaylistResult {
+  final String message;
+  final String? platformId;
+  final String? playlistId;
+  final bool added;
+
+  const AddToPlaylistResult({
+    required this.message,
+    this.platformId,
+    this.playlistId,
+    required this.added,
+  });
+}
+
+/// Opens the sheet for [track] and returns the pick result, or null
 /// when the sheet was dismissed without picking a playlist.
-Future<String?> showAddToPlaylistSheet(
+Future<AddToPlaylistResult?> showAddToPlaylistSheet(
   BuildContext context,
   Track track,
 ) async {
   final navContext = Navigator.maybeOf(context) != null
       ? context
       : navigatorKey.currentContext ?? context;
-  return showModalBottomSheet<String>(
+  return showModalBottomSheet<AddToPlaylistResult>(
     context: navContext,
     builder: (context) => AddToPlaylistSheet(track: track),
   );
@@ -31,7 +50,8 @@ Future<String?> showAddToPlaylistSheet(
 
 /// Picker for the add-to-playlist action: the user's saved playlists,
 /// newest first. Tapping one appends the track (never twice) and pops
-/// with the message the caller shows.
+/// with the result the caller shows, including the playlist identity
+/// for Undo.
 class AddToPlaylistSheet extends ConsumerWidget {
   final Track track;
 
@@ -73,9 +93,14 @@ class AddToPlaylistSheet extends ConsumerWidget {
                             .addTrack(playlist.info.platformId,
                                 playlist.info.id, track);
                         if (context.mounted) {
-                          Navigator.of(context).pop(added
-                              ? 'Added to ${playlist.info.name}'
-                              : 'Already in ${playlist.info.name}');
+                          Navigator.of(context).pop(AddToPlaylistResult(
+                            message: added
+                                ? 'Added to ${playlist.info.name}'
+                                : 'Already in ${playlist.info.name}',
+                            platformId: playlist.info.platformId,
+                            playlistId: playlist.info.id,
+                            added: added,
+                          ));
                         }
                       },
                     ),
