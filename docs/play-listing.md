@@ -49,7 +49,7 @@ playlist recommender, music discovery, deezer, new music, album recommendations
 
 ## Graphic assets needed (your screenshots, from a real device)
 - [ ] App icon: `assets/launcher_icons/store/ic_playstore_512.png` ✓ (in repo)
-- [ ] Feature graphic: 1024 × 500 (make in Figma/Canva — dark purple #A855F7 bg, icon + tagline)
+- [ ] Feature graphic: 1024 × 500 (make in Figma/Canva — paper #F5F1E8 bg, vermillion #D43D2A stamp + tagline, per the Japanese editorial design in `docs/design.md`)
 - [ ] Phone screenshots: at least 2, up to 8 (1080×1920 or similar) —
       suggested: Home, Generating→Results, Album detail, News For You
 - [ ] Privacy policy URL: `https://naruba200.github.io/MusicMap/privacy.html`

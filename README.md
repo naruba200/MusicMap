@@ -22,25 +22,49 @@ data, with plain-English explanations of *why* each pick fits your taste.
   JSON export of everything.
 - **News tab** — 9 music-news RSS sources with a For You ranking based on
   the artists you like; articles open in Custom Tabs, works offline from
-  cache.
-- **Open anywhere** — every song/album links out to Spotify, Deezer,
-  YouTube, or YouTube Music (search links, no auth needed).
+  cache. A dot on the News tab marks new content since your last visit;
+  visiting News clears it.
+- **Full-song playback** — recommendations play as full songs inside
+  the app (own Audius/Jamendo streams, Audius/Jamendo search, and
+  YouTube Music via the VISIONOS player client), with a mini-player
+  that stays visible on every screen and a full player (queue,
+  shuffle, repeat, real progress). When no in-app stream exists the
+  match opens in the platform app instead. Matching is always
+  artist + title, so a wrong same-title song no longer plays; every
+  attempt is logged (Settings → Playback → Playback log).
+  Details: [`docs/playback.md`](docs/playback.md).
+- **Japanese editorial design** — six named themes (Editorial, Tako,
+  Cappuccino, Matcha, Sakura, Midnight) and Compact/Complex designs,
+  chosen in Settings → Appearance and stored on-device. Details:
+  [`docs/design.md`](docs/design.md).
 - **Discover tab** — one tab per new source, kept out of core Last.fm
   scoring. Audius: trending tracks, track/playlist search, playlist
   import with a "Get recommendations" run, and full streams that play
-  inside the Audius tab only. Jamendo: Creative Commons track search,
-  playlist import, and radios (same in-tab playback). Openwhyd: public
-  playlist import, tracks opening on their original platform. Mixcloud:
+  in-app through the shared player. Jamendo: Creative Commons track search,
+  playlist import, and radios (live radio shows "Live" instead of a
+  duration). Openwhyd: public playlist import, tracks opening on their original platform. Mixcloud:
   popular/hot/new shows, show + tag search — a browser only, it never
   feeds the song generator.
+- **Open anywhere** — any song/album without an in-app stream links out
+  to Spotify, Deezer, YouTube, or YouTube Music (search links, no auth
+  needed).
 - **Private by design** — no accounts, no servers, no ads, no tracking.
   Everything lives on your device. ([Privacy policy](docs/privacy.html))
 
 ## Tech
 
 Flutter (Android-first) · Riverpod · Dio · Hive + flutter_secure_storage ·
-pure-Dart recommendation engine & RSS parser · unit-tested
-(`flutter test`).
+`audioplayers` + `audio_service` (player + notification) · `google_fonts`
+(Archivo + Noto Sans JP, runtime download, cached) · pure-Dart
+recommendation engine & RSS parser · unit-tested (`flutter test`).
+
+**Design:** Japanese editorial — six themes, Compact/Complex, Archivo +
+Noto Sans JP. The design authority is `DESIGN.md` (kept with the
+prototype, outside the repo); what shipped is summarized in
+[`docs/design.md`](docs/design.md). **Playback:** full songs only, no
+previews — resolver chain, VISIONOS YouTube audio, and Spotify as
+metadata-only are documented in
+[`docs/playback.md`](docs/playback.md).
 
 **Spec:** this project is built spec-first — the product specification is
 the source of truth for behavior. Ask the maintainer for the latest copy
@@ -80,7 +104,11 @@ share intents is Android-only and is skipped on desktop.
   YouTube may pick a cover or live version), and **Save to YouTube**
   opens the matched songs as YouTube / YouTube Music playlists via
   TLGG links (≤50 songs per link; unmatched songs are listed, not
-  dropped) — tap Save in YouTube to keep the playlist.
+  dropped) — tap Save in YouTube to keep the playlist. Spotify
+  search is metadata-only for playback: it finds the canonical
+  track, but Spotify audio is Widevine-DRM and cannot play in-app,
+  so the resolver re-resolves the canonical track through Audius /
+  YouTube Music (see [`docs/playback.md`](docs/playback.md)).
 - **Deezer**: no key needed for public playlists — the zero-setup intake
   path.
 - **SoundCloud**: parked for v1 — SoundCloud now requires an Artist Pro
@@ -119,7 +147,11 @@ share intents is Android-only and is skipped on desktop.
   instead of silently truncating. The YouTube Data API v3 route was
   deliberately not built: the no-key route fully works, so no key
   setup is required; a Data API key would only arbitrate counts for
-  removed/private videos.
+  removed/private videos. **In-app audio (VISIONOS rung):** the
+  finder match is played in-app through the VISIONOS player client
+  (plain audio URLs, no token); some videos return YouTube's
+  bot-gate (`LOGIN_REQUIRED`) and fall back to opening in the
+  YouTube app — see [`docs/playback.md`](docs/playback.md).
 
 ## Release
 
