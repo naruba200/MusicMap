@@ -208,7 +208,8 @@ class AppShell extends ConsumerWidget {
   /// A nav icon, with the small accent News dot on destination 2
   /// while there is unseen content. The dot is a plain 6px accent
   /// circle on the icon corner: no glow, no pulse.
-  Widget _destinationIcon(int destination, bool selected, bool hasNew) {
+  static Widget _destinationIcon(
+      int destination, bool selected, bool hasNew) {
     final (icon, selectedIcon, _) = _destinations[destination];
     final base = Icon(selected ? selectedIcon : icon);
     if (destination != 2 || !hasNew) return base;
@@ -237,11 +238,6 @@ class AppShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final index = ref.watch(tabIndexProvider);
-    // The News dot (DESIGN.md micro-interaction): a small accent dot
-    // on the News tab while there is content newer than the last
-    // visit. No glow, no pulse, it marks a real state.
-    final hasNew = ref.watch(newsProvider.select((s) => s.hasNew));
     // Playback failures surface once as a small bottom message with
     // the reason (item 3): the player bumps errorSeq per failure, so
     // the same failure is never shown twice.
@@ -260,6 +256,14 @@ class AppShell extends ConsumerWidget {
     // above the root Navigator, so the Navigator's Overlay is not an
     // ancestor of the mini-player. IconButton tooltips (and any other
     // overlay user down here) need one, or they throw in debug builds.
+    //
+    // The bottom bar is its own ConsumerWidget ([_ShellBottomBar]),
+    // not built inline here: an Overlay inserts its initial entries
+    // once and never rebuilds them (OverlayState has no
+    // didUpdateWidget sync), so a tab index read in this build would
+    // freeze the nav highlight on the first tab forever. The bar
+    // subscribes on its own below the entry and rebuilds when the
+    // tab changes.
     return Overlay(
       initialEntries: [
         OverlayEntry(
@@ -274,38 +278,58 @@ class AppShell extends ConsumerWidget {
               // bar hides: the player itself is on screen, so the strip
               // beneath it would be a dead duplicate. Dismissing the
               // player brings it back.
-              bottomNavigationBar: playerOnTop
-                  ? null
-                  : Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const MiniPlayerBar(),
-                        NavigationBar(
-                          selectedIndex: index,
-                          onDestinationSelected: (i) {
-                            // Visiting News clears the dot and records the visit.
-                            if (i == 2) {
-                              ref.read(newsProvider.notifier).markSeen();
-                            }
-                            ref
-                                .read(tabIndexProvider.notifier)
-                                .state = i;
-                          },
-                          destinations: [
-                            for (var d = 0; d < _destinations.length; d++)
-                              NavigationDestination(
-                                icon:
-                                    _destinationIcon(d, false, hasNew),
-                                selectedIcon:
-                                    _destinationIcon(d, true, hasNew),
-                                label: _destinations[d].$3,
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
+              bottomNavigationBar:
+                  playerOnTop ? null : const _ShellBottomBar(),
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The shell bottom bar: the mini-player strip above the six-destination
+/// nav. A ConsumerWidget of its own so it rebuilds when the tab or the
+/// News dot changes (see AppShell: the Overlay entry above it is
+/// built once and never re-invoked).
+class _ShellBottomBar extends ConsumerWidget {
+  const _ShellBottomBar();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final index = ref.watch(tabIndexProvider);
+    // The News dot (DESIGN.md micro-interaction): a small accent dot
+    // on the News tab while there is content newer than the last
+    // visit. No glow, no pulse, it marks a real state.
+    final hasNew = ref.watch(newsProvider.select((s) => s.hasNew));
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const MiniPlayerBar(),
+        NavigationBar(
+          selectedIndex: index,
+          onDestinationSelected: (i) {
+            // A nav tap from a pushed sub-screen (Playback log,
+            // Playlist detail, Generating, Results) pops back to the
+            // tabs first: the tab switch underneath would otherwise
+            // be invisible behind the pushed route. The tabs are
+            // keep-alive, so the pop loses no tab state.
+            navigatorKey.currentState
+                ?.popUntil((route) => route.isFirst);
+            // Visiting News clears the dot and records the visit.
+            if (i == 2) {
+              ref.read(newsProvider.notifier).markSeen();
+            }
+            ref.read(tabIndexProvider.notifier).state = i;
+          },
+          destinations: [
+            for (var d = 0; d < AppShell._destinations.length; d++)
+              NavigationDestination(
+                icon: AppShell._destinationIcon(d, false, hasNew),
+                selectedIcon: AppShell._destinationIcon(d, true, hasNew),
+                label: AppShell._destinations[d].$3,
+              ),
+          ],
         ),
       ],
     );

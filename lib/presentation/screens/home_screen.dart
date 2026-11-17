@@ -651,7 +651,9 @@ class _PlaylistPicker extends ConsumerWidget {
           );
         }
         return SizedBox(
-          height: 132,
+          // Square covers (104x104) plus two label lines: 104 + 4
+          // + name + count.
+          height: 144,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: list.length,
@@ -670,10 +672,10 @@ class _PlaylistPicker extends ConsumerWidget {
                         borderRadius: BorderRadius.circular(2),
                         child: p.coverUrl != null
                             ? Image.network(p.coverUrl!,
-                                width: 104, height: 88, fit: BoxFit.cover)
+                                width: 104, height: 104, fit: BoxFit.cover)
                             : Container(
                                 width: 104,
-                                height: 88,
+                                height: 104,
                                 color: Theme.of(context).colorScheme.surface,
                                 child: const Icon(Icons.queue_music),
                               ),

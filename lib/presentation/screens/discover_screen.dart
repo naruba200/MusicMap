@@ -79,8 +79,8 @@ class DiscoverScreen extends ConsumerWidget {
 
 // -- Audius tab -------------------------------------------------------------
 // Playback here goes through the shared player (audioPlayerProvider):
-// the rows below use PreviewButton with the tab's track list as the
-// queue, so a Discover stream keeps playing, with next/previous,
+// the rows below are EditorialSongRow with the tab's track list as
+// the queue, so a Discover stream keeps playing, with next/previous,
 // after leaving the tab, and the mini-player shows it.
 
 class _AudiusTab extends ConsumerStatefulWidget {

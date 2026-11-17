@@ -135,8 +135,8 @@ class FullSongMatch {
     }
   }
 
-  /// Short label for the stream-source map (PreviewButton labels +
-  /// logs): 'spotify-corrected' when the match came from the
+  /// Short label for the stream-source map (player labels + logs):
+  /// 'spotify-corrected' when the match came from the
   /// Spotify-corrected re-resolve, else the source name.
   String get sourceLabel => viaSpotify ? 'spotify-corrected' : source.name;
 }

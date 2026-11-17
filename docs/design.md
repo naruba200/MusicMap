@@ -10,7 +10,8 @@ authority, this file is the record.
 
 ## Identity
 
-A music-discovery app that reads like a Japanese music magazine:
+A streaming app that reads like a Japanese music magazine, with a
+recommendation feature that turns a playlist into picks:
 paper, ink, one accent, and cover art doing the talking. No
 gradients, no glass, no glow. Sharp corners (4px cards/buttons, 2px
 covers/chips). The vermillion stamp motif marks each screen with one

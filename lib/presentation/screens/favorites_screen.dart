@@ -1,9 +1,9 @@
 // Favorites (S-07, FR-12/12b/12c): "Today's picks" editorial block
 // on top with a refresh action, then hearted items grouped into
-// Songs and Albums with counts, multi-select mode with a bottom
-// action bar, swipe-to-remove. Tap a song plays it (EditorialSongRow
-// with the double-tap window); overflow opens it elsewhere. No swipe
-// quick actions here (that is Phase C).
+// Songs and Albums with counts, multi-select mode with an action bar
+// overlaid above the shell bar, swipe-to-remove. Tap a song plays it
+// (EditorialSongRow with the double-tap window); overflow opens it
+// elsewhere. No swipe quick actions here (that is Phase C).
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -43,6 +43,11 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
   bool _selectMode = false;
   final _selected = <String>{}; // normalizeKey(artist, title/name)
 
+  /// The select-mode bar's overlay controller (see
+  /// [_selectBarPortal]): the bar is shown and hidden after the
+  /// frame, never during build.
+  final _selectBarController = OverlayPortalController();
+
   String _key(String artist, String name) =>
       RecommendationEngine.normalizeKey(artist, name);
 
@@ -75,11 +80,85 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     ref.read(tabIndexProvider.notifier).state = 0;
   }
 
+  /// Shows the select-mode bar exactly while there is a selection
+  /// on this tab. Called after the frame: show/hide must not run
+  /// during build.
+  void _syncSelectBarOverlay() {
+    // 3 is the Favorites tab (see tabIndexProvider in providers.dart).
+    final show = _selectMode &&
+        _selected.isNotEmpty &&
+        ref.read(tabIndexProvider) == 3;
+    if (show && !_selectBarController.isShowing) {
+      _selectBarController.show();
+    } else if (!show && _selectBarController.isShowing) {
+      _selectBarController.hide();
+    }
+  }
+
+  /// The select-mode bar as an overlay above the shell bar
+  /// (mini-player + nav), instead of a second bottom bar stacked
+  /// inside the tab body: it floats over the list instead of
+  /// shrinking it, and it sits at the top of the shell bar because
+  /// the portal targets the root Navigator's overlay, whose bottom
+  /// edge is the shell bar. Pushed routes render above earlier
+  /// overlay entries, so the bar hides itself behind a sub-screen.
+  Widget _selectBarPortal() {
+    return OverlayPortal(
+      controller: _selectBarController,
+      overlayChildBuilder: (_) => Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        child: _selectBar(),
+      ),
+      child: const SizedBox.shrink(),
+    );
+  }
+
+  /// The select-mode action bar: Remove (n) plus Cancel. No SafeArea:
+  /// its bottom edge is the top of the shell bar, not the screen
+  /// edge, so no system-inset padding belongs here.
+  Widget _selectBar() {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surface,
+      child: Container(
+        key: const ValueKey('favorites-select-bar'),
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          border: Border(top: BorderSide(color: scheme.outline)),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: FilledButton.tonal(
+                onPressed: _removeSelected,
+                child: Text('Remove (${_selected.length})'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            TextButton(
+              onPressed: _toggleSelectMode,
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final tracks = ref.watch(favoriteTracksProvider);
     final albums = ref.watch(favoriteAlbumsProvider);
-    final scheme = Theme.of(context).colorScheme;
+    // Rebuild on tab changes so the select bar hides on other tabs.
+    ref.watch(tabIndexProvider);
+    // Sync the overlay after the frame: show/hide must not run
+    // during build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncSelectBarOverlay();
+    });
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -126,36 +205,9 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                 ],
               ),
             ),
+            _selectBarPortal(),
           ],
         ),
-        bottomNavigationBar: _selectMode && _selected.isNotEmpty
-            ? SafeArea(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: scheme.surface,
-                    border: Border(
-                        top: BorderSide(color: scheme.outline)),
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.tonal(
-                          onPressed: _removeSelected,
-                          child: Text('Remove (${_selected.length})'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      TextButton(
-                        onPressed: _toggleSelectMode,
-                        child: const Text('Cancel'),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            : null,
       ),
     );
   }
@@ -171,8 +223,9 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
   Widget _dailyPicksSection() {
     final picks = ref.watch(dailyPicksProvider);
     final isComplex = _isComplex(context);
-    final artWidth = isComplex ? 128.0 : 104.0;
-    final artHeight = isComplex ? 112.0 : 88.0;
+    // Square covers: the art is square, so the box is square too
+    // (104x104 Compact, 128x128 Complex).
+    final artSize = isComplex ? 128.0 : 104.0;
     final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -210,8 +263,10 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
           // The horizontal list is short; the loading, error, and
           // empty states carry a message plus a button, so they get
           // the taller slot instead of overflowing the list height.
+          // Square art plus two label lines: 104 + 4 + title +
+          // artist (Compact), 128 + 4 + title + artist (Complex).
           height: _hasPicks(picks)
-              ? (isComplex ? 168 : 140)
+              ? (isComplex ? 176 : 148)
               : 184,
           child: picks.when(
             loading: () => const EditorialLoadingState(
@@ -263,11 +318,11 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                             (_) =>
                                 AlbumDetailScreen(album: item.album!))),
                     child: SizedBox(
-                      width: artWidth,
+                      width: artSize,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _pickArt(item, artWidth, artHeight),
+                          _pickArt(item, artSize),
                           const SizedBox(height: 4),
                           Text(item.title,
                               style: theme.textTheme.bodySmall,
@@ -292,22 +347,29 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     );
   }
 
-  Widget _pickArt(_PickItem item, double width, double height) {
+  Widget _pickArt(_PickItem item, double size) {
     final url = item.artUrl;
     return ClipRRect(
       borderRadius: BorderRadius.circular(2),
       child: url != null && url.isNotEmpty
           ? CachedNetworkImage(
               imageUrl: url,
-              width: width,
-              height: height,
+              width: size,
+              height: size,
               fit: BoxFit.cover,
-              errorWidget: (_, __, ___) =>
-                  const Icon(Icons.music_note_outlined, size: 40),
+              // The fallback is a fixed-size tile matching the image
+              // box, never a bare icon that sizes itself.
+              errorWidget: (_, __, ___) => Container(
+                width: size,
+                height: size,
+                color: Theme.of(context).colorScheme.surface,
+                alignment: Alignment.center,
+                child: const Icon(Icons.music_note_outlined, size: 40),
+              ),
             )
           : Container(
-              width: width,
-              height: height,
+              width: size,
+              height: size,
               color: Theme.of(context).colorScheme.surface,
               child: const Icon(Icons.music_note_outlined, size: 40),
             ),
@@ -449,11 +511,26 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                           width: 48,
                           height: 48,
                           fit: BoxFit.cover,
-                          errorWidget: (_, __, ___) =>
-                              const Icon(Icons.album_outlined),
+                          // The fallback is a fixed 48x48 tile
+                          // matching the image box, never a bare
+                          // icon that sizes itself.
+                          errorWidget: (_, __, ___) => Container(
+                            width: 48,
+                            height: 48,
+                            color: Theme.of(context).colorScheme.surface,
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.album_outlined,
+                                size: 40),
+                          ),
                         ),
                       )
-                    : const Icon(Icons.album_outlined, size: 40),
+                    : Container(
+                        width: 48,
+                        height: 48,
+                        color: Theme.of(context).colorScheme.surface,
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.album_outlined, size: 40),
+                      ),
             title:
                 Text(a.name, maxLines: 1, overflow: TextOverflow.ellipsis),
             subtitle:

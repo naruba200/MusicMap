@@ -2,12 +2,22 @@
 
 Paste a playlist link. Get music you'll actually like.
 
-Music Man turns any Deezer, YouTube Music, or Spotify playlist into
-personalized song and album recommendations — powered by real listening
-data, with plain-English explanations of *why* each pick fits your taste.
+Music Man streams full songs from any Deezer, YouTube Music, or
+Spotify playlist, with a recommendation feature that turns a playlist
+into personalized song and album picks, powered by real listening
+data and plain-English explanations of *why* each pick fits your taste.
 
 ## Features
 
+- **Full-song playback:** stream full songs inside the app (own
+  Audius/Jamendo streams, Audius/Jamendo search, and YouTube Music
+  via the VISIONOS player client), with a mini-player that stays
+  visible on every screen and a full player (queue, shuffle, repeat,
+  real progress). When no in-app stream exists the match opens in the
+  platform app instead. Matching is always artist + title, so a wrong
+  same-title song no longer plays; every attempt is logged (Settings
+  → Playback → Playback log).
+  Details: [`docs/playback.md`](docs/playback.md).
 - **Playlist intake** — paste a Deezer, YouTube Music, or Spotify link;
   500+ track playlists load fully (paginated, virtualized list). YouTube
   Music and Spotify are beta, but full playlists import with no key
@@ -24,15 +34,6 @@ data, with plain-English explanations of *why* each pick fits your taste.
   the artists you like; articles open in Custom Tabs, works offline from
   cache. A dot on the News tab marks new content since your last visit;
   visiting News clears it.
-- **Full-song playback** — recommendations play as full songs inside
-  the app (own Audius/Jamendo streams, Audius/Jamendo search, and
-  YouTube Music via the VISIONOS player client), with a mini-player
-  that stays visible on every screen and a full player (queue,
-  shuffle, repeat, real progress). When no in-app stream exists the
-  match opens in the platform app instead. Matching is always
-  artist + title, so a wrong same-title song no longer plays; every
-  attempt is logged (Settings → Playback → Playback log).
-  Details: [`docs/playback.md`](docs/playback.md).
 - **Japanese editorial design** — six named themes (Editorial, Tako,
   Cappuccino, Matcha, Sakura, Midnight) and Compact/Complex designs,
   chosen in Settings → Appearance and stored on-device. Details:

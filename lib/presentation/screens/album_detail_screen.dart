@@ -27,6 +27,7 @@
 // enrichment actually found one) and larger art.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -313,41 +314,58 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
     } else {
       countLine = 'Surprise album pick';
     }
+    // The square is sized so the header (AppBar plus art) stays
+    // near the old band height: a 240 square plus the AppBar would
+    // push the tracklist's Retry below the fold on a short screen.
+    final artSize = math.min(
+      isComplex ? 280.0 : 200.0,
+      MediaQuery.sizeOf(context).width - 32,
+    );
     return Scaffold(
+      // The art is a square block, not a full-bleed app bar: the old
+      // wide SliverAppBar band cropped a square cover into a thin
+      // strip. Complex gets the bigger square (bigger covers per
+      // DESIGN.md), capped at the screen width minus padding.
+      appBar: AppBar(
+        title:
+            Text(album.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ),
       body: CustomScrollView(
         slivers: [
-          SliverAppBar(
-            expandedHeight: isComplex ? 360 : 240,
-            pinned: true,
-            flexibleSpace: FlexibleSpaceBar(
-              title: Text(album.name,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-              background: GestureDetector(
-                onTap: _handleArtTap,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    AlbumArtImage(
-                      album: album,
-                      enrichment: widget.enrichment,
-                      width: double.infinity,
-                      height: double.infinity,
-                      placeholderIconSize: 96,
-                    ),
-                    if (_popping)
-                      Center(
-                        child: AnimatedScale(
-                          scale: 1,
-                          duration: micro,
-                          curve: Curves.easeOut,
-                          child: Icon(
-                            Icons.favorite,
-                            size: 72,
-                            color: theme.colorScheme.primary,
-                          ),
+          SliverToBoxAdapter(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                child: SizedBox(
+                  width: artSize,
+                  height: artSize,
+                  child: GestureDetector(
+                    onTap: _handleArtTap,
+                    child: Stack(
+                      children: [
+                        AlbumArtImage(
+                          album: album,
+                          enrichment: widget.enrichment,
+                          width: double.infinity,
+                          height: double.infinity,
+                          placeholderIconSize: 96,
                         ),
-                      ),
-                  ],
+                        if (_popping)
+                          Center(
+                            child: AnimatedScale(
+                              scale: 1,
+                              duration: micro,
+                              curve: Curves.easeOut,
+                              child: Icon(
+                                Icons.favorite,
+                                size: 72,
+                                color: theme.colorScheme.primary,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),

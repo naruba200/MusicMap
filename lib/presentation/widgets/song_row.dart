@@ -439,23 +439,34 @@ class _EditorialSongRowState extends ConsumerState<EditorialSongRow> {
                 ],
               ),
             ),
-            if (widget.trailingMark != null) ...[
-              widget.trailingMark!,
-              const SizedBox(width: 4),
-            ],
-            GestureDetector(
-              onTapDown: (_) => _cancelPendingPlay(),
-              child: FavoriteButton(track: track),
-            ),
-            if (widget.onOverflow != null)
-              GestureDetector(
-                onTapDown: (_) => _cancelPendingPlay(),
-                child: IconButton(
-                  icon: const Icon(Icons.more_vert),
-                  tooltip: 'More actions',
-                  onPressed: widget.onOverflow,
-                ),
+            // The trailing icons fade as the swipe row opens (see
+            // SwipeTrailingFade): the row is transparent, so without
+            // the fade the heart and overflow would sit on top of
+            // the revealed Like/Add/Remove buttons mid-swipe.
+            SwipeTrailingFade(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.trailingMark != null) ...[
+                    widget.trailingMark!,
+                    const SizedBox(width: 4),
+                  ],
+                  GestureDetector(
+                    onTapDown: (_) => _cancelPendingPlay(),
+                    child: FavoriteButton(track: track),
+                  ),
+                  if (widget.onOverflow != null)
+                    GestureDetector(
+                      onTapDown: (_) => _cancelPendingPlay(),
+                      child: IconButton(
+                        icon: const Icon(Icons.more_vert),
+                        tooltip: 'More actions',
+                        onPressed: widget.onOverflow,
+                      ),
+                    ),
+                ],
               ),
+            ),
           ],
         ),
       ),

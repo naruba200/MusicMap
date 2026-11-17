@@ -43,6 +43,53 @@ class SwipeAction {
   });
 }
 
+/// Fades [child] out as the enclosing [SwipeActionRow] opens, so a
+/// row's trailing icons (heart, overflow, move buttons) never sit on
+/// top of the revealed actions mid-swipe or snapped open. The fade
+/// completes by half reveal: the icons are gone before they can
+/// reach the buttons behind the row. Outside a swipe row the child
+/// is unchanged (opacity 1). The fade tracks the finger while
+/// dragging and eases over the release snap otherwise (the design
+/// tokens: zero duration in Compact, so it switches instantly there).
+class SwipeTrailingFade extends StatelessWidget {
+  final Widget child;
+
+  const SwipeTrailingFade({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = _SwipeRevealScope.of(context);
+    final fraction = scope?.fraction ?? 0.0;
+    final duration = scope?.duration ?? Duration.zero;
+    final opacity = (1.0 - fraction * 2).clamp(0.0, 1.0);
+    return AnimatedOpacity(
+      opacity: opacity,
+      duration: duration,
+      child: child,
+    );
+  }
+}
+
+/// The reveal state of the nearest [SwipeActionRow] ancestor: 0 when
+/// the row is shut, 1 when its actions are fully revealed.
+class _SwipeRevealScope extends InheritedWidget {
+  const _SwipeRevealScope({
+    required this.fraction,
+    required this.duration,
+    required super.child,
+  });
+
+  final double fraction;
+  final Duration duration;
+
+  static _SwipeRevealScope? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_SwipeRevealScope>();
+
+  @override
+  bool updateShouldNotify(_SwipeRevealScope oldWidget) =>
+      fraction != oldWidget.fraction || duration != oldWidget.duration;
+}
+
 class SwipeActionRow extends StatefulWidget {
   final Widget child;
 
@@ -167,25 +214,34 @@ class _SwipeActionRowState extends State<SwipeActionRow> {
             ),
           ),
         ),
-        // The detector rides inside the transform with the row, so
-        // when the row slides aside the detector stops covering the
-        // revealed actions: hit testing follows one path, and a
-        // detector left spanning the full width would win the hit
-        // test over the buttons behind it. An open row swallows its
-        // own tap to close instead of playing; a closed row leaves
-        // the tap to the child.
-        AnimatedContainer(
+        // The reveal scope rides above the sliding row so the row's
+        // own trailing icons (wrapped in SwipeTrailingFade by the
+        // row widget) fade as the row slides aside: the row is
+        // transparent, so without the fade the heart and overflow
+        // would sit on top of the revealed actions mid-swipe.
+        _SwipeRevealScope(
+          fraction: (-_dx / _maxReveal).clamp(0.0, 1.0),
           duration: _dragging ? Duration.zero : micro,
-          curve: Curves.easeOut,
-          transform: Matrix4.translationValues(_dx, 0, 0),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onHorizontalDragUpdate: _onDragUpdate,
-            onHorizontalDragEnd: _onDragEnd,
-            onTap: _open ? close : null,
-            child: AbsorbPointer(
-              absorbing: _open,
-              child: widget.child,
+          // The detector rides inside the transform with the row, so
+          // when the row slides aside the detector stops covering the
+          // revealed actions: hit testing follows one path, and a
+          // detector left spanning the full width would win the hit
+          // test over the buttons behind it. An open row swallows its
+          // own tap to close instead of playing; a closed row leaves
+          // the tap to the child.
+          child: AnimatedContainer(
+            duration: _dragging ? Duration.zero : micro,
+            curve: Curves.easeOut,
+            transform: Matrix4.translationValues(_dx, 0, 0),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragUpdate: _onDragUpdate,
+              onHorizontalDragEnd: _onDragEnd,
+              onTap: _open ? close : null,
+              child: AbsorbPointer(
+                absorbing: _open,
+                child: widget.child,
+              ),
             ),
           ),
         ),

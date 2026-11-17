@@ -966,29 +966,40 @@ class _QueueRow extends ConsumerWidget {
                 ),
               ),
             ),
-            if (isCurrent)
-              Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: Text(
-                  'Playing',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.w700),
-                ),
+            // The trailing controls fade as the swipe row opens (see
+            // SwipeTrailingFade): the row is transparent, so without
+            // the fade the Playing mark and move buttons would sit
+            // on top of the revealed Remove button mid-swipe.
+            SwipeTrailingFade(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isCurrent)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Text(
+                        'Playing',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.arrow_upward),
+                    tooltip: 'Move up',
+                    onPressed: index > 0
+                        ? () => player.moveInQueue(index, index - 1)
+                        : null,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.arrow_downward),
+                    tooltip: 'Move down',
+                    onPressed: index < queueLength - 1
+                        ? () => player.moveInQueue(index, index + 1)
+                        : null,
+                  ),
+                ],
               ),
-            IconButton(
-              icon: const Icon(Icons.arrow_upward),
-              tooltip: 'Move up',
-              onPressed: index > 0
-                  ? () => player.moveInQueue(index, index - 1)
-                  : null,
-            ),
-            IconButton(
-              icon: const Icon(Icons.arrow_downward),
-              tooltip: 'Move down',
-              onPressed: index < queueLength - 1
-                  ? () => player.moveInQueue(index, index + 1)
-                  : null,
             ),
           ],
         ),
