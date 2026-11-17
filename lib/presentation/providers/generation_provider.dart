@@ -27,7 +27,6 @@ import '../../data/fallback/listenbrainz_client.dart';
 import '../../data/fullsong/full_song_resolver.dart';
 import '../../data/lastfm/lastfm_client.dart';
 import '../../data/models/music_models.dart';
-import '../../data/platforms/open_in_app.dart';
 import '../../data/repositories/favorites_repository.dart';
 import '../../data/repositories/history_repository.dart';
 import '../../data/repositories/settings_repository.dart';
@@ -1339,9 +1338,6 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   /// through Deezer/iTunes links + Audius).
   final FullSongResolver _resolver;
 
-  /// Outbound-link opener (openLinkInAppFirst by default; injected
-  /// in tests so no real app is launched).
-  final Future<bool> Function(Uri uri) _openExternal;
   StreamSubscription<PlayerState>? _stateSub;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration>? _durationSub;
@@ -1349,13 +1345,15 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   /// instead of overwriting the newer track's state.
   int _playToken = 0;
   /// How each resolved track was sourced: 'ownStream' for a track's
-  /// own stream, 'audius' / 'jamendo' for full in-app streams,
-  /// 'youtube' / 'deezer' / 'itunes' for outbound links,
-  /// 'spotify-corrected' for a match found via the Spotify metadata
-  /// re-resolve, 'full' for a full stream handed to playStream
-  /// (e.g. Jamendo radio). The button uses this to label a full
-  /// track honestly. Jamendo is only a resolver step when the user
-  /// set a client_id (see [audioPlayerProvider]).
+  /// own stream, 'audius' / 'jamendo' / 'youtube' for full in-app
+  /// streams, 'spotify-corrected' for a match found via the Spotify
+  /// metadata re-resolve, 'full' for a full stream handed to
+  /// playStream (e.g. Jamendo radio). Only in-app sources are ever
+  /// recorded here: an outbound-only match is reported in-app
+  /// instead of opened, so it never gets a source label. The button
+  /// uses this to label a full track honestly. Jamendo is only a
+  /// resolver step when the user set a client_id (see
+  /// [audioPlayerProvider]).
   final Map<String, String> _streamSource = {};
 
   /// Position ticks are rounded to this grid before they reach the
@@ -1367,12 +1365,10 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   AudioPlayerNotifier(FallbackSources fallbacks,
       {AudioBackend? backend,
       AudiusClient? audiusClient,
-      FullSongResolver? resolver,
-      Future<bool> Function(Uri)? openExternal})
+      FullSongResolver? resolver})
       : _backend = backend,
         _resolver = resolver ??
             FullSongResolver(fallbacks: fallbacks, audius: audiusClient),
-        _openExternal = openExternal ?? openLinkInAppFirst,
         super(PlaybackState.idle);
 
   /// The real backend, created lazily on first actual playback so that
@@ -1443,12 +1439,12 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   String? get resolvingKey => state.resolvingKey;
 
   /// Resolution source for [track] once it has been resolved:
-  /// 'ownStream' (the track's own stream), 'audius' / 'jamendo'
-  /// (full in-app stream), 'youtube' / 'deezer' / 'itunes' (outbound
-  /// link), 'spotify-corrected' (match found via the Spotify metadata
-  /// re-resolve) or 'full' (full stream handed to playStream).
-  /// Null before any resolution. Every resolution is a full track —
-  /// there are no previews anymore.
+  /// 'ownStream' (the track's own stream), 'audius' / 'jamendo' /
+  /// 'youtube' (full in-app stream), 'spotify-corrected' (match found
+  /// via the Spotify metadata re-resolve) or 'full' (full stream
+  /// handed to playStream). Null before any resolution, and null
+  /// when the track had no in-app stream. Every resolution is a full
+  /// track, never a preview.
   String? streamSourceFor(Track track) => _streamSource[_key(track)];
 
   /// Human-readable reason for a playback failure, for the SnackBar.
@@ -1561,12 +1557,16 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
   }
 
   /// Resolve [track] through the full-song resolver and play it
-  /// in-app, or open its external match (YouTube / Deezer / iTunes
-  /// link) in that app. Returns the failure message to report, or
-  /// null when the track is playing in-app or was opened externally.
-  /// Never touches state on the failure path (the caller owns the
-  /// error state); on the success paths it checks [token] first, so
-  /// a superseded resolve cannot overwrite a newer tap's state.
+  /// in-app. Returns the failure message to report, or null when the
+  /// track is playing in-app. A match that is outbound-only (a
+  /// YouTube / Deezer / iTunes link with no in-app stream) is a
+  /// failure too: the app reports "No full stream found for this
+  /// track" in-app and never opens another app from a tap. The user
+  /// can still open a track in its platform app explicitly, from the
+  /// overflow sheet on the track row. Never touches state on the
+  /// failure path (the caller owns the error state); on the success
+  /// path it checks [token] first, so a superseded resolve cannot
+  /// overwrite a newer tap's state.
   Future<String?> _resolveAndPlay({
     required Track track,
     required List<Track> queue,
@@ -1583,33 +1583,19 @@ class AudioPlayerNotifier extends StateNotifier<PlaybackState> {
         networkSource: result.networkSource,
       );
     }
-    _streamSource[_key(track)] = match.sourceLabel;
-    if (match.playInApp) {
-      await _playResolved(
-        track: track,
-        url: match.streamUrl!,
-        queue: queue,
-        index: index,
-        token: token,
-      );
-      return null;
+    if (!match.playInApp) {
+      // Outbound-only match: no in-app stream exists. Report it
+      // in-app with the standard no-stream message; the per-source
+      // reason is in the Playback log.
+      return playbackErrorMessage('', failure: FullSongFailure.noStream);
     }
-    final opened = await _openExternal(Uri.parse(match.externalUrl!));
-    if (token != _playToken) return null;
-    if (!opened) return "Couldn't open the ${match.label} link";
-    // The song plays in the other app: the track stays loaded
-    // (paused) in-app so the mini-player shows what is playing
-    // elsewhere instead of going blank.
-    state = state.copyWith(
-      currentTrack: track,
+    _streamSource[_key(track)] = match.sourceLabel;
+    await _playResolved(
+      track: track,
+      url: match.streamUrl!,
       queue: queue,
-      queueIndex: index,
-      isPlaying: false,
-      isResolving: false,
-      clearResolvingKey: true,
-      isLive: false,
-      shuffledOrder: _orderForQueue(queue, index),
-      clearLastError: true,
+      index: index,
+      token: token,
     );
     return null;
   }

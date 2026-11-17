@@ -35,6 +35,12 @@ class _FullSongAdapter implements HttpClientAdapter {
   final Map<String, List<Map<String, dynamic>>> itunes;
   final Map<String, List<Map<String, dynamic>>> deezer;
   final List<Map<String, dynamic>> audiusTracks;
+
+  /// Per-query Audius answers (keyed by the search query): when set
+  /// for a query, it wins over [audiusTracks]. Lets a test answer
+  /// the phase-1 query and the Spotify-corrected re-resolve query
+  /// differently.
+  final Map<String, List<Map<String, dynamic>>> audiusByQuery;
   final int audiusDelayMs;
   final List<Map<String, dynamic>> jamendoTracks;
   final String? youtubeTitle;
@@ -52,6 +58,7 @@ class _FullSongAdapter implements HttpClientAdapter {
     this.itunes = const {},
     this.deezer = const {},
     this.audiusTracks = const [],
+    this.audiusByQuery = const {},
     this.audiusDelayMs = 0,
     this.jamendoTracks = const [],
     this.youtubeTitle,
@@ -85,7 +92,8 @@ class _FullSongAdapter implements HttpClientAdapter {
       if (audiusDelayMs > 0) {
         await Future.delayed(Duration(milliseconds: audiusDelayMs));
       }
-      body = {'data': audiusTracks};
+      final q = options.queryParameters['query'] as String? ?? '';
+      body = {'data': audiusByQuery[q] ?? audiusTracks};
     } else if (host == 'api.jamendo.com' && path == '/v3.0/tracks/') {
       body = {'results': jamendoTracks};
     } else if (host == 'www.youtube.com' && path == '/youtubei/v1/player') {
@@ -195,7 +203,7 @@ const _track = Track(artist: 'Singer', title: 'Song');
 
 void main() {
   group('full song resolver: priority', () {
-    test('in-app Audius beats a faster YouTube external match', () async {
+    test('in-app Audius beats a faster YouTube outbound-only match', () async {
       // YouTube answers immediately, Audius 30ms later — priority,
       // not arrival order, must win: the in-app stream plays.
       final resolver = _resolver(_FullSongAdapter(
@@ -235,7 +243,7 @@ void main() {
       expect(adapter.requests, 0);
     });
 
-    test('YouTube finder match is external and logs no direct audio URL',
+    test('YouTube finder match is outbound-only and logs no direct audio URL',
         () async {
       final log = ResolutionLog();
       final resolver = _resolver(
@@ -260,7 +268,7 @@ void main() {
       expect(log.entries.single.result, 'YouTube link');
     });
 
-    test('Deezer link is the last external resort', () async {
+    test('Deezer link is the last outbound-only resort', () async {
       final resolver = _resolver(_FullSongAdapter(
         deezer: {
           'Singer Song': [
@@ -306,7 +314,7 @@ void main() {
       expect(log.entries.single.result, 'YouTube stream');
     });
 
-    test('VISIONOS in-app YouTube beats a Deezer external link', () async {
+    test('VISIONOS in-app YouTube beats a Deezer outbound-only link', () async {
       final resolver = _resolver(_FullSongAdapter(
         deezer: {
           'Singer Song': [
@@ -330,7 +338,7 @@ void main() {
       expect(result.match!.playInApp, isTrue);
     });
 
-    test('VISIONOS bot-gated falls back to the external handoff + log',
+    test('VISIONOS bot-gated is an outbound-only match, logged, not opened',
         () async {
       final resolver = _resolver(_FullSongAdapter(
         youtubeTitle: 'Song',
@@ -349,7 +357,7 @@ void main() {
       expect(yt.detail, contains('bot-gated'));
     });
 
-    test('VISIONOS with no audio URL falls back to the external handoff',
+    test('VISIONOS with no audio URL is an outbound-only match',
         () async {
       final resolver = _resolver(_FullSongAdapter(
         youtubeTitle: 'Song',
@@ -368,7 +376,7 @@ void main() {
       expect(yt.detail, isNot(contains('bot-gated')));
     });
 
-    test('VISIONOS network error still falls back to the external handoff',
+    test('VISIONOS network error still leaves an outbound-only match',
         () async {
       final resolver = _resolver(_FullSongAdapter(
         youtubeTitle: 'Song',
@@ -425,9 +433,11 @@ void main() {
       expect(result.failure, FullSongFailure.noStream);
     });
 
-    test('wrong-artist same-title is REJECTED on Audius too', () async {
-      // The old Audius artist exemption is gone: a title match from
-      // a different uploader must not play when the artist is clean.
+    test('Audius matches on title alone: the artist field is the '
+        'uploader handle, not the recording artist', () async {
+      // The uploader is 'DJ Someone Else', not 'Singer'. The old
+      // strict artist check rejected this right track. Audius
+      // matches on the strict cleaned title alone now.
       final resolver = _resolver(_FullSongAdapter(
         audiusTracks: [
           {
@@ -438,11 +448,31 @@ void main() {
         ],
       ));
       final result = await resolver.resolve(_track);
+      expect(result.match, isNotNull);
+      expect(result.match!.source, FullSongSource.audius);
+      expect(result.match!.playInApp, isTrue);
+      final audius =
+          result.attempts.firstWhere((a) => a.source == 'audius');
+      expect(audius.outcome, SourceOutcome.matched);
+      expect(audius.detail, contains('uploader handle'));
+    });
+
+    test('Audius still rejects a wrong title', () async {
+      final resolver = _resolver(_FullSongAdapter(
+        audiusTracks: [
+          {
+            'id': '7',
+            'title': 'Not Song',
+            'user': {'name': 'Singer'},
+          },
+        ],
+      ));
+      final result = await resolver.resolve(_track);
       expect(result.match, isNull);
       final audius =
           result.attempts.firstWhere((a) => a.source == 'audius');
       expect(audius.outcome, SourceOutcome.noMatch);
-      expect(audius.detail, 'Title matched but artist did not match');
+      expect(audius.detail, 'No title match');
     });
 
     test('polluted artist falls back to title-only and matches', () async {
@@ -504,10 +534,14 @@ void main() {
       );
       final result = await resolver.resolve(_track);
       expect(result.match, isNull);
-      expect(
-        result.attempts.firstWhere((a) => a.source == 'jamendo').outcome,
-        SourceOutcome.skipped,
-      );
+      final jamendo =
+          result.attempts.firstWhere((a) => a.source == 'jamendo');
+      expect(jamendo.outcome, SourceOutcome.skipped);
+      // The honest reason: no client_id, and where the user's own
+      // free id goes.
+      expect(jamendo.detail, contains('No client_id set'));
+      expect(jamendo.detail, contains('devportal.jamendo.com'));
+      expect(jamendo.detail, contains('never commit it'));
     });
 
     test('Jamendo match plays in-app when a client_id is set', () async {
@@ -565,27 +599,31 @@ void main() {
   });
 
   group('full song resolver: Spotify metadata re-resolve', () {
-    test('Spotify corrects the artist and the re-resolve finds it',
+    test('Spotify corrects the title and the re-resolve finds it',
         () async {
-      // Phase 1 Audius rejects the track: the uploader is
-      // 'DJ Someone', not 'Singer'. Spotify says the canonical
-      // artist IS 'DJ Someone', so the re-resolve with the corrected
+      // The wanted title is a mistyped intake title ('Sogn'), so
+      // phase 1 finds nothing on Audius. Spotify says the canonical
+      // title is 'Song', and the re-resolve with the corrected
       // metadata matches — labelled spotify-corrected.
+      const wanted = Track(artist: 'Singer', title: 'Sogn');
       final resolver = _resolver(
         _FullSongAdapter(
-          audiusTracks: [
-            {
-              'id': '7',
-              'title': 'Song',
-              'user': {'name': 'DJ Someone'},
-            },
-          ],
+          audiusByQuery: {
+            'Sogn': const [],
+            'Song': [
+              {
+                'id': '7',
+                'title': 'Song',
+                'user': {'name': 'DJ Someone'},
+              },
+            ],
+          },
         ),
         spotifySearch: (_) async => [
-          const Track(artist: 'DJ Someone', title: 'Song'),
+          const Track(artist: 'Singer', title: 'Song'),
         ],
       );
-      final result = await resolver.resolve(_track);
+      final result = await resolver.resolve(wanted);
       final match = result.match;
       expect(match, isNotNull);
       expect(match!.source, FullSongSource.audius);
@@ -623,7 +661,7 @@ void main() {
       );
       final result = await resolver.resolve(_track);
       // The Spotify failure is logged, not fatal: the Deezer link
-      // still wins as the external match.
+      // still wins as the outbound-only match.
       expect(result.match, isNotNull);
       expect(result.match!.source, FullSongSource.deezer);
       expect(
@@ -730,6 +768,26 @@ void main() {
       expect(log.entries.single.artist, 'Singer');
     });
 
+    test('resolving through the notifier shared log updates the '
+        'Playback log screen state', () async {
+      // Regression test for the blank Playback log: the resolver
+      // records straight into the notifier's log, so the notifier's
+      // state must re-emit (the screen watches the state, not the
+      // buffer). A raw ResolutionLog alone would pass this while the
+      // screen stayed empty.
+      final notifier = ResolutionLogNotifier();
+      expect(notifier.state, isEmpty);
+      final resolver = _resolver(_FullSongAdapter(), log: notifier.log);
+      await resolver.resolve(_track);
+      expect(notifier.state, hasLength(1));
+      expect(notifier.state.single.title, 'Song');
+      expect(notifier.state.single.result, 'No full stream found');
+      expect(
+        notifier.state.single.attempts.map((a) => a.source),
+        containsAll(['audius', 'jamendo', 'youtube', 'deezer', 'itunes']),
+      );
+    });
+
     test('a network failure names the unreachable source', () async {
       final resolver = _resolver(
         _FullSongAdapter(),
@@ -744,7 +802,7 @@ void main() {
   });
 
   group('full song service routing', () {
-    test('service routes in-app, outbound, noMatch, and openFailed',
+    test('service routes in-app, outbound-only to noMatch, and noMatch',
         () async {
       // In-app route (Audius).
       final inApp = <String>[];
@@ -758,7 +816,6 @@ void main() {
         onInApp: (t, url, source) async {
           inApp.add('$source:$url');
         },
-        onExternal: (_) async => true,
         onNoMatch: (_) async {},
       );
       expect(action, FullSongAction.playInApp);
@@ -766,8 +823,12 @@ void main() {
         'audius:https://audius.test/v1/tracks/7/stream?app_name=MusicMan',
       ]);
 
-      // Outbound route (YouTube) with a successful launch.
-      final opened = <Uri>[];
+      // Outbound-only route (YouTube): the tap never leaves the
+      // app. There is no onExternal callback anymore; the service
+      // reports it as a no-match, and the caller shows the in-app
+      // message. The resolver result still carries the match, so
+      // the caller (and the log) can say why.
+      FullSongResolveResult? seenOutbound;
       final ytService = FullSongService(_resolver(_FullSongAdapter(
         youtubeTitle: 'Song',
         youtubeVideoId: 'abc123',
@@ -775,27 +836,21 @@ void main() {
       action = await ytService.act(
         _track,
         onInApp: (_, __, ___) async {},
-        onExternal: (uri) async {
-          opened.add(uri);
-          return true;
-        },
-        onNoMatch: (_) async {},
-      );
-      expect(action, FullSongAction.openExternal);
-      expect(opened, [Uri.parse('https://www.youtube.com/watch?v=abc123')]);
-
-      // Outbound launch failure is reported, not swallowed.
-      var noMatchCalled = false;
-      action = await ytService.act(
-        _track,
-        onInApp: (_, __, ___) async {},
-        onExternal: (_) async => false,
-        onNoMatch: (_) async {
-          noMatchCalled = true;
+        onNoMatch: (result) async {
+          seenOutbound = result;
         },
       );
-      expect(action, FullSongAction.openFailed);
-      expect(noMatchCalled, isFalse);
+      expect(action, FullSongAction.noMatch);
+      expect(seenOutbound, isNotNull);
+      expect(seenOutbound!.match, isNotNull);
+      expect(seenOutbound!.match!.source, FullSongSource.youtube);
+      expect(seenOutbound!.match!.playInApp, isFalse);
+      expect(
+        seenOutbound!.attempts
+            .firstWhere((a) => a.source == 'youtube')
+            .outcome,
+        SourceOutcome.noDirectUrl,
+      );
 
       // No strict match anywhere -> noMatch, with the result.
       FullSongResolveResult? seen;
@@ -804,7 +859,6 @@ void main() {
       action = await emptyService.act(
         _track,
         onInApp: (_, __, ___) async {},
-        onExternal: (_) async => true,
         onNoMatch: (result) async {
           seen = result;
         },

@@ -140,8 +140,8 @@ void main() {
       expect(notifier.state.errorSeq, 1);
     });
 
-    test('an external match opens the link instead of playing in-app',
-        () async {
+    test('an outbound-only match never leaves the app: the tap shows '
+        'the in-app no-stream message', () async {
       final dio = Dio();
       dio.httpClientAdapter = _GatedAdapter(Future.value({
         'results': [
@@ -153,22 +153,17 @@ void main() {
         ],
         'data': [],
       }));
-      final opened = <Uri>[];
-      final notifier = AudioPlayerNotifier(
-        FallbackSources(dio),
-        openExternal: (uri) async {
-          opened.add(uri);
-          return true;
-        },
-      );
+      final notifier = AudioPlayerNotifier(FallbackSources(dio));
       const track = Track(artist: 'Singer', title: 'Song');
       await notifier.play(track);
-      expect(opened, [Uri.parse('https://music.apple.com/song/1')]);
-      // The track stays loaded (paused) so the mini-player shows
-      // what is playing in the other app.
-      expect(notifier.state.currentTrack, track);
+      // The iTunes link exists but has no in-app stream, so nothing
+      // opens anywhere: the player reports the no-stream message
+      // in-app, the track is not loaded, and no source label is set.
+      expect(notifier.state.lastError, 'No full stream found for this track');
+      expect(notifier.state.errorSeq, 1);
+      expect(notifier.state.currentTrack, isNull);
       expect(notifier.state.isPlaying, isFalse);
-      expect(notifier.streamSourceFor(track), 'itunes');
+      expect(notifier.streamSourceFor(track), isNull);
     });
   });
 

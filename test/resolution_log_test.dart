@@ -64,6 +64,21 @@ void main() {
       notifier.clear();
       expect(notifier.state, isEmpty);
     });
+
+    test('a record made straight into the shared log re-emits state',
+        () {
+      // Regression test for the blank Playback log: the resolver
+      // records straight into notifier.log, bypassing
+      // notifier.record. The state must still update, or the screen
+      // (which watches the state) stays empty while the buffer fills.
+      final notifier = ResolutionLogNotifier();
+      expect(notifier.state, isEmpty);
+      notifier.log.record(_entry('Song'));
+      expect(notifier.state, hasLength(1));
+      expect(notifier.state.single.title, 'Song');
+      notifier.log.clear();
+      expect(notifier.state, isEmpty);
+    });
   });
 
   group('SourceOutcome labels', () {

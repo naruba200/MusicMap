@@ -127,10 +127,22 @@ class ResolutionEntry {
 /// In-memory ring buffer of the last [maxEntries] resolve attempts.
 /// Plain Dart (no Riverpod) so the resolver can record into it
 /// directly; [ResolutionLogNotifier] exposes it to the UI.
+///
+/// Wiring note: the resolver records straight into this object, so
+/// [onChanged] is how the notifier learns about it. Without the
+/// callback the notifier's state would stay empty forever even
+/// though the buffer holds entries, which is exactly how the
+/// Playback log screen ended up blank: the resolver wrote here, the
+/// notifier never re-emitted, and the screen watches the notifier's
+/// state, not this buffer.
 class ResolutionLog {
   static const int maxEntries = 100;
 
   final List<ResolutionEntry> _entries = [];
+
+  /// Called after every [record] and [clear]; the notifier sets this
+  /// to re-emit the entry list for the screen.
+  void Function()? onChanged;
 
   List<ResolutionEntry> get entries => List.unmodifiable(_entries);
 
@@ -139,18 +151,27 @@ class ResolutionLog {
     while (_entries.length > maxEntries) {
       _entries.removeAt(0);
     }
+    onChanged?.call();
   }
 
-  void clear() => _entries.clear();
+  void clear() {
+    _entries.clear();
+    onChanged?.call();
+  }
 }
 
 /// Riverpod wrapper around a [ResolutionLog]: state is the entry list,
 /// newest last (the screen reverses it). The resolver records through
-/// [log]; the screen watches the state.
+/// [log]; the screen watches the state. The constructor wires
+/// [ResolutionLog.onChanged] so a record made straight into [log]
+/// (which is how the resolver writes) re-emits the state. Without
+/// that wiring the screen would stay empty while the buffer fills.
 class ResolutionLogNotifier extends StateNotifier<List<ResolutionEntry>> {
   final ResolutionLog log = ResolutionLog();
 
-  ResolutionLogNotifier() : super(const []);
+  ResolutionLogNotifier() : super(const []) {
+    log.onChanged = () => state = log.entries;
+  }
 
   void record(ResolutionEntry entry) {
     log.record(entry);

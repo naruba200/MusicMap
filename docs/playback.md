@@ -23,28 +23,42 @@ logged, and each source is bounded by an 8-second timeout.
 
 1. **The track's own `streamUrl`** (Audius/Jamendo-imported tracks) —
    plays in-app.
-2. **Audius search** — plays in-app. The artist check is *required*
-   when the artist is clean; title-only only when the artist is
-   really unknown.
+2. **Audius search**: plays in-app. Matches on the strict cleaned
+   title alone: the Audius artist field is the uploader's display
+   name or handle, not the recording artist, so it cannot verify the
+   track and is not checked.
 3. **Jamendo search** — plays in-app, only when the user has set a
-   Jamendo `client_id` (`lib/core/constants.dart`, local only).
+   Jamendo `client_id` (`lib/core/constants.dart`, local only). The
+   id is the user's own free one from devportal.jamendo.com. Never
+   commit a real one. Without it the rung is skipped and the log
+   says so.
 4. **YouTube Music finder → VISIONOS player client** — the finder
    matches strictly on title + artist and returns a videoId; the
    VISIONOS client resolves a direct audio-only stream URL that
    plays in-app. On failure (bot-gated, no audio URL, network) the
-   match stays external (opens in the YouTube / YouTube Music app)
-   and the log records why.
+   match is outbound-only: the player reports "No full stream found
+   for this track" in-app instead of opening YouTube, and the log
+   records why (bot-gated shows per attempt).
 5. **Spotify metadata search → one re-resolve round** — Spotify finds
    the canonical track, then the resolver tries Audius + the YTM
    finder once more with the corrected metadata. Metadata only (see
    below). This phase runs only when no in-app match was found yet.
-6. **Deezer / iTunes links** (strict match) — external match only.
+6. **Deezer / iTunes links** (strict match): outbound-only matches.
+   found and logged, but never opened automatically. The user can
+   still open a track in its platform app explicitly, from the
+   overflow sheet on the track row.
 
-**Matching is always artist + title** (cleaned title equality + the
-artist first-word rule). Title-only is allowed only when the artist
+**Matching is artist + title** (cleaned title equality + the
+artist first-word rule), except Audius, which matches on the strict
+title alone (see step 2). Title-only is allowed only when the artist
 is really unknown (`RecommendationEngine.isPollutedArtist`) — the
 old title-only steps that played wrong same-title songs are gone,
 and a wrong match is no longer cached.
+
+**No automatic external open:** tapping a track either plays it
+in-app or shows the in-app failure message. A link-only match never
+leaves the app on its own; the only way out is the explicit
+"Open in platform" action in the overflow sheet.
 
 **Caching:** successful in-app resolutions are cached (stream URL
 per normalized key). Failures are never cached — a failed source may
@@ -75,8 +89,12 @@ audio URLs without a token.
 `LOGIN_REQUIRED` ("Sign in to confirm you're not a bot") from a
 datacenter IP — likely IP reputation, and a phone on mobile data may
 do better. The resolver treats that as a normal fall-through to the
-external handoff, never as an error. Phone QA is the decider: worst
-case on the phone is the old external-handoff behavior, not a crash.
+in-app no-stream message, never as an error. Phone QA is the
+decider: read the Playback log on the phone after tapping a track
+that fails. A YouTube attempt with "No direct audio URL (bot-gated)"
+means the phone network is bot-gated; any other reason means the
+failure is elsewhere. Worst case on the phone is the in-app message,
+not a crash and not a jump to YouTube.
 
 ## Spotify is metadata-only
 
@@ -104,6 +122,15 @@ Every resolve records one entry in the resolution log
 tried, the outcome, and the reason. Read it in the app at
 Settings → Playback → Playback log (newest first, per-source reason
 inline, Clear). The log holds the last 100 attempts.
+
+The resolver records straight into the notifier's shared log
+instance, and the notifier re-emits its state on every record, so
+the screen updates as attempts happen. (An earlier wiring bug broke
+this: the resolver wrote into the buffer while the notifier's state
+stayed empty, so the screen was blank even though resolves were
+being recorded. The regression test is "resolving through the
+notifier shared log updates the Playback log screen state" in
+`test/full_song_test.dart`.)
 
 Playback failures are reported with the reason, not a generic
 message:
@@ -155,8 +182,12 @@ message:
 - **Per-track platform is not recorded** (see `docs/design.md`):
   the resolver knows which source matched, but `Track` carries no
   platform field, so the UI cannot show it.
-- **Phone QA is still pending:** full songs playing in-app, wrong-
-  artist same-title tracks rejected, the three failure messages,
-  the Playback log, the Spotify 401 path, and queue / mini-player /
-  notification regressions — pull `main`, run on the phone, and
-  check them live.
+- **Phone QA is still pending:** full songs playing in-app, no
+  automatic jump to YouTube on a tap, wrong-artist same-title
+  tracks rejected (all sources except Audius, which matches on
+  title alone), the three failure messages, the Playback log
+  recording every attempt, the Spotify 401 path, and queue /
+  mini-player / notification regressions — pull `main`, run on the
+  phone, and check them live. For the VISIONOS bot-gate question,
+  read the Playback log after a failed tap: a YouTube attempt
+  marked bot-gated answers it.
